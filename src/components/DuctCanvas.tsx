@@ -1,30 +1,31 @@
 /**
- * DuctCanvas – transparent overlay canvas for duct drawing interaction.
+ * DuctCanvas – transparent overlay canvas for duct drawing.
  *
- * Renders (on top of FloorplanCanvas):
- *   • Placed duct segments (double-line Revit style)
- *   • Diffusers (supply = blue square-X, return = red square-X)
- *   • Transitions
- *   • In-progress drawing preview
- *   • Optimal solution overlay (when toggled)
- *   • Hover popup for diffuser resize
+ * Drawing model:
+ *   – Click+drag draws an L-shaped route (horizontal-first) made of two
+ *     orthogonal segments.  Straight runs stay as one segment.
+ *   – Elbows (square fittings) are rendered wherever two segments share an
+ *     endpoint.
+ *   – Duct size snaps to the selected size; player can resize via double-click
+ *     popup.
+ *   – Supply = blue, return = red, optimal overlay = green ghost.
  *
- * Interaction model:
- *   supply/return duct tool:
- *     mousedown → start segment at snapped grid point
- *     mousemove → preview with orthogonal/45° snap
- *     mouseup   → place segment, auto-size, check if ends on room → place diffuser
- *   diffuser tool:
- *     click in room → place/cycle diffuser
- *   eraser:
- *     click near segment/diffuser → remove
+ * Interaction:
+ *   mousedown  → start draw (duct tool) or place diffuser
+ *   mousemove  → preview L-route
+ *   mouseup    → commit segment(s); auto-place diffuser when endpoint is inside a room
+ *   dblclick   → open size-resize popup on a diffuser
+ *   contextmenu→ cancel in-progress draw
  */
 import React, { useRef, useEffect, useCallback } from 'react';
 import type {
-  FloorPlan, Room, AHU, DuctSystem, DuctSegment, Diffuser, Transition,
+  FloorPlan, Room, AHU, DuctSystem, DuctSegment, Diffuser,
   DrawingTool, DuctSize, GridPoint, Level,
 } from '../types';
-import { GRID_PX, CANVAS_PAD, gridToPixel, pixelToGrid, snapToGridPoint, snapDuctAngle, uid, dist, segLen } from '../game/utils';
+import {
+  GRID_PX, CANVAS_PAD, gridToPixel, pixelToGrid, snapToGridPoint,
+  uid, dist, segLen,
+} from '../game/utils';
 import { autoSizeDuct, DUCT_MAX_CFM, ductLineGap, sizeDiffusersForRoom } from '../game/ductSizing';
 
 interface Props {
@@ -40,29 +41,27 @@ interface Props {
   onLayerChange: (layer: number) => void;
 }
 
-// Rendering constants
-const SUPPLY_COLOR = '#3b82f6';
-const RETURN_COLOR = '#ef4444';
-const OPTIMAL_COLOR = 'rgba(34,197,94,0.6)';
-const PREVIEW_COLOR = 'rgba(59,130,246,0.5)';
-const LABEL_BG = 'rgba(255,255,255,0.85)';
+const SUPPLY_COLOR  = '#3b82f6';
+const RETURN_COLOR  = '#ef4444';
+const OPTIMAL_COLOR = 'rgba(34,197,94,0.75)';
+const PREVIEW_COLOR = 'rgba(59,130,246,0.55)';
+const LABEL_BG      = 'rgba(255,255,255,0.88)';
 
-// ─── Main component ────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export function DuctCanvas({
   width, height, level, ductSystem, activeTool, selectedSize,
   currentLayer, showOptimal, onDuctSystemChange, onLayerChange,
 }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const stateRef = useRef({
-    isDrawing: false,
-    drawStart: null as GridPoint | null,
-    previewEnd: null as GridPoint | null,
-    hoveredDiffId: null as string | null,
-    popupDiffId: null as string | null,
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const stateRef    = useRef({
+    isDrawing:    false,
+    drawStart:    null as GridPoint | null,
+    previewEnd:   null as GridPoint | null,
+    popupDiffId:  null as string | null,
   });
 
-  // ─── render ──────────────────────────────────────────────────────────────────
+  // ── render ────────────────────────────────────────────────────────────────
 
   const render = useCallback(() => {
     const canvas = canvasRef.current;
@@ -72,84 +71,71 @@ export function DuctCanvas({
 
     const s = stateRef.current;
 
-    // Optimal overlay
-    if (showOptimal) drawDuctSystem(ctx, level.optimalDuctSystem, OPTIMAL_COLOR, 'rgba(34,197,94,0.35)', true);
-
-    // Player system
-    drawDuctSystem(ctx, ductSystem, SUPPLY_COLOR, RETURN_COLOR, false);
-
-    // Preview
-    if (s.isDrawing && s.drawStart && s.previewEnd) {
-      const cfm = estimateCFMForPreview(ductSystem, s.drawStart, activeTool === 'duct_return');
-      drawDuctSegPreview(ctx, s.drawStart, s.previewEnd, selectedSize, cfm);
+    if (showOptimal) {
+      drawDuctSystem(ctx, level.optimalDuctSystem, OPTIMAL_COLOR, OPTIMAL_COLOR, true);
     }
 
-    // Diffuser popups
+    drawDuctSystem(ctx, ductSystem, SUPPLY_COLOR, RETURN_COLOR, false);
+
+    // Preview L-route
+    if (s.isDrawing && s.drawStart && s.previewEnd) {
+      const { seg1, seg2, corner } = lRoute(s.drawStart, s.previewEnd);
+      const isReturn = activeTool === 'duct_return';
+      if (seg1) drawSegPreview(ctx, seg1.start, seg1.end, selectedSize, isReturn);
+      if (seg2) drawSegPreview(ctx, seg2.start, seg2.end, selectedSize, isReturn);
+      if (corner) drawElbow(ctx, corner, selectedSize, isReturn ? PREVIEW_COLOR : PREVIEW_COLOR, 0.7);
+    }
+
+    // Resize popup
     if (s.popupDiffId) {
-      const diff = ductSystem.diffusers.find(d => d.id === s.popupDiffId);
-      if (diff) drawSizePopup(ctx, diff);
+      const d = ductSystem.diffusers.find(x => x.id === s.popupDiffId);
+      if (d) drawSizePopup(ctx, d);
     }
   }, [width, height, level, ductSystem, activeTool, selectedSize, currentLayer, showOptimal]);
 
   useEffect(() => { render(); }, [render]);
 
-  // ─── event handlers ───────────────────────────────────────────────────────────
+  // ── mouse helpers ─────────────────────────────────────────────────────────
 
-  function getGridPos(e: React.MouseEvent<HTMLCanvasElement>): GridPoint {
+  function gpFromEvent(e: React.MouseEvent<HTMLCanvasElement>): GridPoint {
     const rect = canvasRef.current!.getBoundingClientRect();
-    const raw = pixelToGrid(e.clientX - rect.left, e.clientY - rect.top);
-    return snapToGridPoint(raw);
+    return snapToGridPoint(pixelToGrid(e.clientX - rect.left, e.clientY - rect.top));
   }
 
-  function getGridPosHalf(e: React.MouseEvent<HTMLCanvasElement>): GridPoint {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const raw = pixelToGrid(e.clientX - rect.left, e.clientY - rect.top);
-    return { x: Math.round(raw.x * 2) / 2, y: Math.round(raw.y * 2) / 2 };
-  }
+  // ── handlers ──────────────────────────────────────────────────────────────
 
   function handleMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
     if (e.button !== 0) return;
 
-    // Close popup if open
+    // Close popup on any click
     if (stateRef.current.popupDiffId) {
       stateRef.current.popupDiffId = null;
       render();
       return;
     }
 
-    const gp = getGridPos(e);
+    const gp = gpFromEvent(e);
 
     if (activeTool === 'duct_supply' || activeTool === 'duct_return') {
-      stateRef.current.isDrawing = true;
-      stateRef.current.drawStart = gp;
+      stateRef.current.isDrawing  = true;
+      stateRef.current.drawStart  = gp;
       stateRef.current.previewEnd = gp;
+      return;
     }
 
-    if (activeTool === 'diffuser_supply' || activeTool === 'diffuser_return') {
-      const isReturn = activeTool === 'diffuser_return';
-      placeDiffuser(gp, isReturn);
-    }
-
-    if (activeTool === 'transition_rise') {
-      onLayerChange(Math.min(1, currentLayer + 1));
-    }
-    if (activeTool === 'transition_drop') {
-      onLayerChange(Math.max(0, currentLayer - 1));
-    }
-
-    if (activeTool === 'eraser') {
-      eraseAt(gp);
-    }
+    if (activeTool === 'diffuser_supply') { placeDiffuser(gp, false); return; }
+    if (activeTool === 'diffuser_return') { placeDiffuser(gp, true);  return; }
+    if (activeTool === 'transition_rise') { onLayerChange(Math.min(1, currentLayer + 1)); return; }
+    if (activeTool === 'transition_drop') { onLayerChange(Math.max(0, currentLayer - 1)); return; }
+    if (activeTool === 'eraser')          { eraseAt(gp); return; }
   }
 
   function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
     if (!stateRef.current.isDrawing || !stateRef.current.drawStart) return;
-    const raw = pixelToGrid(
-      e.clientX - canvasRef.current!.getBoundingClientRect().left,
-      e.clientY - canvasRef.current!.getBoundingClientRect().top,
+    const rect = canvasRef.current!.getBoundingClientRect();
+    stateRef.current.previewEnd = snapToGridPoint(
+      pixelToGrid(e.clientX - rect.left, e.clientY - rect.top)
     );
-    const snapped = snapToGridPoint(raw);
-    stateRef.current.previewEnd = snapDuctAngle(stateRef.current.drawStart, snapped);
     render();
   }
 
@@ -157,145 +143,116 @@ export function DuctCanvas({
     const s = stateRef.current;
     if (!s.isDrawing || !s.drawStart) return;
 
-    const endRaw = pixelToGrid(
-      e.clientX - canvasRef.current!.getBoundingClientRect().left,
-      e.clientY - canvasRef.current!.getBoundingClientRect().top,
+    const endPt = snapToGridPoint(
+      pixelToGrid(
+        e.clientX - canvasRef.current!.getBoundingClientRect().left,
+        e.clientY - canvasRef.current!.getBoundingClientRect().top,
+      )
     );
-    const endSnapped = snapToGridPoint(endRaw);
-    const endPos = snapDuctAngle(s.drawStart, endSnapped);
 
-    s.isDrawing = false;
+    s.isDrawing  = false;
+    s.previewEnd = null;
 
-    if (dist(s.drawStart, endPos) < 0.1) {
-      render();
-      return;
-    }
+    if (dist(s.drawStart, endPt) < 0.1) { s.drawStart = null; render(); return; }
 
     const isReturn = activeTool === 'duct_return';
-    const cfm = estimateCFMForSegment(ductSystem, s.drawStart, endPos, isReturn);
+    const cfm = estimateCFM(ductSystem, isReturn);
 
-    const newSeg: DuctSegment = {
-      id: uid(),
-      start: s.drawStart,
-      end: endPos,
-      size: selectedSize,
-      cfm,
-      layer: currentLayer,
-      isReturn,
-    };
+    const { seg1, seg2 } = lRoute(s.drawStart, endPt);
+    const newSegs: DuctSegment[] = [];
+    if (seg1) newSegs.push({ id: uid(), ...seg1, size: selectedSize, cfm, layer: currentLayer, isReturn });
+    if (seg2) newSegs.push({ id: uid(), ...seg2, size: selectedSize, cfm, layer: currentLayer, isReturn });
 
-    const newSystem = { ...ductSystem, segments: [...ductSystem.segments, newSeg] };
+    let newSystem: DuctSystem = { ...ductSystem, segments: [...ductSystem.segments, ...newSegs] };
 
-    // Auto-place diffuser if endpoint is inside a room
-    const room = findRoomAtPoint(endPos, level.rooms);
-    if (room && !isReturn) {
-      const existing = newSystem.diffusers.filter(d => d.roomId === room.id && !d.isReturn).length;
-      const count = existing + 1;
-      const { cfm: dCFM, size } = sizeDiffusersForRoom(room.cfm, count);
-      const newDiff: Diffuser = {
-        id: uid(),
-        position: endPos,
-        roomId: room.id,
-        size,
-        cfm: dCFM,
-        isReturn: false,
-      };
-      newSystem.diffusers = [...newSystem.diffusers, newDiff];
-      // Re-size existing supply diffusers in same room
-      newSystem.diffusers = newSystem.diffusers.map(d =>
-        d.roomId === room.id && !d.isReturn ? { ...d, ...sizeDiffusersForRoom(room.cfm, count) } : d
-      );
-    }
-    if (room && isReturn) {
-      const existing = newSystem.diffusers.filter(d => d.roomId === room.id && d.isReturn).length;
-      const count = existing + 1;
-      const { cfm: dCFM, size } = sizeDiffusersForRoom(room.cfm, count);
-      const retGrille: Diffuser = {
-        id: uid(),
-        position: endPos,
-        roomId: room.id,
-        size,
-        cfm: dCFM,
-        isReturn: true,
-      };
-      newSystem.diffusers = [...newSystem.diffusers, retGrille];
+    // Auto-place diffuser if final endpoint is inside a room
+    const room = roomAtPoint(endPt, level.rooms);
+    if (room) {
+      newSystem = autoPlaceDiffuser(newSystem, endPt, room, isReturn);
     }
 
-    onDuctSystemChange(newSystem);
     s.drawStart = null;
+    onDuctSystemChange(newSystem);
     render();
   }
 
   function handleDoubleClick(e: React.MouseEvent<HTMLCanvasElement>) {
-    const gp = getGridPosHalf(e);
-    const diff = findDiffuserAt(gp, ductSystem.diffusers);
-    if (diff) {
-      stateRef.current.popupDiffId = diff.id;
-      render();
-    }
+    const gp = gpFromEvent(e);
+    const EPS = 0.6;
+    const diff = ductSystem.diffusers.find(d => dist(d.position, gp) < EPS);
+    if (diff) { stateRef.current.popupDiffId = diff.id; render(); }
+  }
+
+  function handlePopupClick(e: React.MouseEvent<HTMLCanvasElement>) {
+    const pid = stateRef.current.popupDiffId;
+    if (!pid) return;
+    const diff = ductSystem.diffusers.find(d => d.id === pid);
+    if (!diff) return;
+
+    const p = gridToPixel(diff.position);
+    const sizes: DuctSize[] = [4, 6, 8, 12];
+    const bw = 46, bh = 22, gap = 4;
+    const totalW = sizes.length * (bw + gap) - gap;
+    const ox = p.x - totalW / 2;
+    const oy = p.y - 70;
+
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    sizes.forEach((s, i) => {
+      const bx = ox + i * (bw + gap);
+      if (mx >= bx && mx <= bx + bw && my >= oy && my <= oy + bh) {
+        resizeDiffuser(pid, s);
+      }
+    });
   }
 
   function handleContextMenu(e: React.MouseEvent<HTMLCanvasElement>) {
     e.preventDefault();
-    stateRef.current.isDrawing = false;
-    stateRef.current.drawStart = null;
+    stateRef.current.isDrawing  = false;
+    stateRef.current.drawStart  = null;
+    stateRef.current.previewEnd = null;
     render();
   }
 
-  // ─── Duct operations ──────────────────────────────────────────────────────────
+  // ── duct operations ───────────────────────────────────────────────────────
 
   function placeDiffuser(gp: GridPoint, isReturn: boolean) {
-    const room = findRoomAtPoint(gp, level.rooms);
+    const room = roomAtPoint(gp, level.rooms);
     if (!room) return;
-    const existing = ductSystem.diffusers.filter(d => d.roomId === room.id && d.isReturn === isReturn).length;
-    const count = existing + 1;
-    const { cfm, size } = sizeDiffusersForRoom(room.cfm, count);
-    const newDiff: Diffuser = { id: uid(), position: gp, roomId: room.id, size, cfm, isReturn };
-    const updated = {
-      ...ductSystem,
-      diffusers: [
-        ...ductSystem.diffusers.map(d =>
-          d.roomId === room.id && d.isReturn === isReturn
-            ? { ...d, cfm, size } : d
-        ),
-        newDiff,
-      ],
-    };
-    onDuctSystemChange(updated);
+    onDuctSystemChange(autoPlaceDiffuser(ductSystem, gp, room, isReturn));
   }
 
   function eraseAt(gp: GridPoint) {
     const EPS = 0.6;
     const diffIdx = ductSystem.diffusers.findIndex(d => dist(d.position, gp) < EPS);
     if (diffIdx >= 0) {
-      const newDiffs = ductSystem.diffusers.filter((_, i) => i !== diffIdx);
-      onDuctSystemChange({ ...ductSystem, diffusers: newDiffs });
+      onDuctSystemChange({ ...ductSystem, diffusers: ductSystem.diffusers.filter((_, i) => i !== diffIdx) });
       return;
     }
-    // Find closest segment endpoint
+    // Erase segment whose start or end is within EPS
     const segIdx = ductSystem.segments.findIndex(
       s => dist(s.start, gp) < EPS || dist(s.end, gp) < EPS
     );
     if (segIdx >= 0) {
-      const newSegs = ductSystem.segments.filter((_, i) => i !== segIdx);
-      onDuctSystemChange({ ...ductSystem, segments: newSegs });
+      onDuctSystemChange({ ...ductSystem, segments: ductSystem.segments.filter((_, i) => i !== segIdx) });
     }
   }
 
   function resizeDiffuser(diffId: string, size: DuctSize) {
     const diff = ductSystem.diffusers.find(d => d.id === diffId);
     if (!diff) return;
-    const newCFM = Math.min(diff.cfm, DUCT_MAX_CFM[size]);
     onDuctSystemChange({
       ...ductSystem,
       diffusers: ductSystem.diffusers.map(d =>
-        d.id === diffId ? { ...d, size, cfm: newCFM } : d
+        d.id === diffId ? { ...d, size, cfm: Math.min(d.cfm, DUCT_MAX_CFM[size]) } : d
       ),
     });
     stateRef.current.popupDiffId = null;
   }
 
-  // ─── Render helpers ───────────────────────────────────────────────────────────
+  // ── JSX ───────────────────────────────────────────────────────────────────
 
   return (
     <canvas
@@ -303,14 +260,38 @@ export function DuctCanvas({
       width={width}
       height={height}
       className="duct-canvas"
-      style={{ width, height, position: 'absolute', top: 0, left: 0, cursor: getCursor(activeTool) }}
+      style={{ width, height, position: 'absolute', top: 0, left: 0, cursor: cursorFor(activeTool) }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
+      onMouseUp={e => { handleMouseUp(e); handlePopupClick(e); }}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
     />
   );
+}
+
+// ─── L-route helper ───────────────────────────────────────────────────────────
+
+type PartialSeg = { start: GridPoint; end: GridPoint };
+
+function lRoute(
+  from: GridPoint,
+  to: GridPoint,
+): { seg1: PartialSeg | null; seg2: PartialSeg | null; corner: GridPoint | null } {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+
+  if (dx === 0 && dy === 0) return { seg1: null, seg2: null, corner: null };
+  if (dx === 0) return { seg1: { start: from, end: to }, seg2: null, corner: null };
+  if (dy === 0) return { seg1: { start: from, end: to }, seg2: null, corner: null };
+
+  // Horizontal-first L
+  const corner: GridPoint = { x: to.x, y: from.y };
+  return {
+    seg1:   { start: from, end: corner },
+    seg2:   { start: corner, end: to },
+    corner,
+  };
 }
 
 // ─── Canvas drawing functions ─────────────────────────────────────────────────
@@ -322,190 +303,235 @@ function drawDuctSystem(
   returnColor: string,
   ghost: boolean,
 ) {
-  // Draw lower-layer segments dimmed
+  const alpha = ghost ? 0.5 : 1;
+
+  // Segments (lower-layer ducts are dimmed)
   for (const seg of ds.segments) {
-    const alpha = ghost ? 0.4 : seg.layer > 0 ? 0.35 : 1;
-    drawDuctSeg(ctx, seg, seg.isReturn ? returnColor : supplyColor, alpha);
+    const a = ghost ? 0.45 : seg.layer > 0 ? 0.35 : 1;
+    drawSeg(ctx, seg, seg.isReturn ? returnColor : supplyColor, a, ghost);
   }
+
+  // Elbows at every junction (where two or more segments share an endpoint)
+  const elbowPts = findElbowPoints(ds.segments);
+  for (const ep of elbowPts) {
+    const color = ep.isReturn ? returnColor : supplyColor;
+    drawElbow(ctx, ep.point, ep.size, color, ghost ? 0.45 : 1);
+  }
+
   // Diffusers on top
-  for (const diff of ds.diffusers) {
-    drawDiffuser(ctx, diff, diff.isReturn ? returnColor : supplyColor, ghost ? 0.5 : 1);
+  for (const d of ds.diffusers) {
+    drawDiffuser(ctx, d, d.isReturn ? returnColor : supplyColor, alpha);
   }
 }
 
-function drawDuctSeg(
+function drawSeg(
   ctx: CanvasRenderingContext2D,
   seg: DuctSegment,
   color: string,
   alpha: number,
+  skipLabel = false,
 ) {
   const pa = gridToPixel(seg.start);
   const pb = gridToPixel(seg.end);
   const gap = ductLineGap(seg.size);
+  const len = Math.sqrt((pb.x - pa.x) ** 2 + (pb.y - pa.y) ** 2);
+  if (len < 2) return;
+
+  const nx = -(pb.y - pa.y) / len;
+  const ny =  (pb.x - pa.x) / len;
+  const h = gap / 2;
 
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  const dx = pb.x - pa.x;
-  const dy = pb.y - pa.y;
-  const len = Math.sqrt(dx * dx + dy * dy);
-  if (len < 1) { ctx.restore(); return; }
-
-  const nx = -dy / len;
-  const ny = dx / len;
-  const half = gap / 2;
-
   // Fill between lines
-  ctx.fillStyle = seg.isReturn ? 'rgba(239,68,68,0.08)' : 'rgba(59,130,246,0.08)';
+  ctx.fillStyle = seg.isReturn ? 'rgba(239,68,68,0.07)' : 'rgba(59,130,246,0.07)';
   ctx.beginPath();
-  ctx.moveTo(pa.x + nx * half, pa.y + ny * half);
-  ctx.lineTo(pb.x + nx * half, pb.y + ny * half);
-  ctx.lineTo(pb.x - nx * half, pb.y - ny * half);
-  ctx.lineTo(pa.x - nx * half, pa.y - ny * half);
+  ctx.moveTo(pa.x + nx * h, pa.y + ny * h);
+  ctx.lineTo(pb.x + nx * h, pb.y + ny * h);
+  ctx.lineTo(pb.x - nx * h, pb.y - ny * h);
+  ctx.lineTo(pa.x - nx * h, pa.y - ny * h);
   ctx.closePath();
   ctx.fill();
 
-  // Double lines
+  // Two outer lines
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(pa.x + nx * half, pa.y + ny * half);
-  ctx.lineTo(pb.x + nx * half, pb.y + ny * half);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(pa.x - nx * half, pa.y - ny * half);
-  ctx.lineTo(pb.x - nx * half, pb.y - ny * half);
-  ctx.stroke();
+  ctx.lineCap = 'butt';
+  for (const sign of [1, -1] as const) {
+    ctx.beginPath();
+    ctx.moveTo(pa.x + nx * h * sign, pa.y + ny * h * sign);
+    ctx.lineTo(pb.x + nx * h * sign, pb.y + ny * h * sign);
+    ctx.stroke();
+  }
 
-  // Size label at midpoint
-  const mx = (pa.x + pb.x) / 2;
-  const my = (pa.y + pb.y) / 2;
-  ctx.fillStyle = color;
-  ctx.font = `bold ${GRID_PX * 0.17}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = LABEL_BG;
-  ctx.fillRect(mx - 18, my - 8, 36, 16);
-  ctx.fillStyle = color;
-  ctx.fillText(`${seg.size}" | ${seg.cfm}`, mx, my);
+  // CFM / size label at midpoint (skip for optimal ghost)
+  if (!skipLabel) {
+    const mx = (pa.x + pb.x) / 2;
+    const my = (pa.y + pb.y) / 2;
+    ctx.font = `bold ${GRID_PX * 0.16}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const txt = `${seg.size}" · ${seg.cfm}`;
+    const tw = ctx.measureText(txt).width;
+    ctx.fillStyle = LABEL_BG;
+    ctx.fillRect(mx - tw / 2 - 3, my - 8, tw + 6, 16);
+    ctx.fillStyle = color;
+    ctx.fillText(txt, mx, my);
+  }
 
   ctx.restore();
 }
 
-function drawDuctSegPreview(
+function drawSegPreview(
   ctx: CanvasRenderingContext2D,
   start: GridPoint,
   end: GridPoint,
   size: DuctSize,
-  cfm: number,
+  isReturn: boolean,
 ) {
-  const fakeSeg: DuctSegment = { id: '', start, end, size, cfm, layer: 0, isReturn: false };
-  drawDuctSeg(ctx, fakeSeg, PREVIEW_COLOR, 0.7);
+  const fakeSeg: DuctSegment = { id: '', start, end, size, cfm: 0, layer: 0, isReturn };
+  drawSeg(ctx, fakeSeg, PREVIEW_COLOR, 0.7, true);
+}
+
+function drawElbow(
+  ctx: CanvasRenderingContext2D,
+  point: GridPoint,
+  size: DuctSize,
+  color: string,
+  alpha: number,
+) {
+  const p = gridToPixel(point);
+  const r = ductLineGap(size) / 2;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color.startsWith('rgba') ? color : color + '18';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+  ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
+  ctx.restore();
 }
 
 function drawDiffuser(
   ctx: CanvasRenderingContext2D,
-  diff: Diffuser,
+  d: Diffuser,
   color: string,
   alpha: number,
 ) {
-  const p = gridToPixel(diff.position);
+  const p = gridToPixel(d.position);
   const r = GRID_PX * 0.22;
-
   ctx.save();
   ctx.globalAlpha = alpha;
-
-  // Square body
   ctx.fillStyle = 'white';
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
   ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
-
-  // X cross
   ctx.beginPath();
-  ctx.moveTo(p.x - r * 0.7, p.y - r * 0.7);
-  ctx.lineTo(p.x + r * 0.7, p.y + r * 0.7);
-  ctx.moveTo(p.x + r * 0.7, p.y - r * 0.7);
-  ctx.lineTo(p.x - r * 0.7, p.y + r * 0.7);
+  ctx.moveTo(p.x - r * 0.68, p.y - r * 0.68);
+  ctx.lineTo(p.x + r * 0.68, p.y + r * 0.68);
+  ctx.moveTo(p.x + r * 0.68, p.y - r * 0.68);
+  ctx.lineTo(p.x - r * 0.68, p.y + r * 0.68);
   ctx.stroke();
-
-  // CFM label below
   ctx.fillStyle = color;
-  ctx.font = `${GRID_PX * 0.16}px monospace`;
+  ctx.font = `${GRID_PX * 0.155}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText(`${diff.size}"/${diff.cfm}`, p.x, p.y + r + 2);
-
+  ctx.fillText(`${d.size}"/${d.cfm}`, p.x, p.y + r + 2);
   ctx.restore();
 }
 
 function drawSizePopup(ctx: CanvasRenderingContext2D, diff: Diffuser) {
   const p = gridToPixel(diff.position);
   const sizes: DuctSize[] = [4, 6, 8, 12];
-  const bw = 46, bh = 22, gap = 4;
+  const bw = 46, bh = 24, gap = 4;
   const totalW = sizes.length * (bw + gap) - gap;
   const ox = p.x - totalW / 2;
-  const oy = p.y - 70;
+  const oy = p.y - 76;
 
   ctx.save();
   ctx.fillStyle = 'rgba(255,255,255,0.97)';
   ctx.strokeStyle = '#64748b';
   ctx.lineWidth = 1;
-  ctx.roundRect?.(ox - 8, oy - 8, totalW + 16, bh + 16, 6);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fillRect(ox - 10, oy - 10, totalW + 20, bh + 20);
+  ctx.strokeRect(ox - 10, oy - 10, totalW + 20, bh + 20);
 
   ctx.font = `bold ${GRID_PX * 0.18}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-
   sizes.forEach((s, i) => {
     const bx = ox + i * (bw + gap);
-    const active = s === diff.size;
-    ctx.fillStyle = active ? '#3b82f6' : '#e2e8f0';
-    ctx.roundRect?.(bx, oy, bw, bh, 4);
-    ctx.fill();
-    ctx.fillStyle = active ? 'white' : '#334155';
+    ctx.fillStyle = s === diff.size ? '#3b82f6' : '#e2e8f0';
+    ctx.fillRect(bx, oy, bw, bh);
+    ctx.fillStyle = s === diff.size ? 'white' : '#334155';
     ctx.fillText(`${s}"`, bx + bw / 2, oy + bh / 2);
   });
-
   ctx.restore();
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function findRoomAtPoint(gp: GridPoint, rooms: Room[]): Room | null {
-  const cellX = Math.floor(gp.x);
-  const cellY = Math.floor(gp.y);
-  return rooms.find(r => r.cells.some(c => c.x === cellX && c.y === cellY)) ?? null;
+function roomAtPoint(gp: GridPoint, rooms: Room[]): Room | null {
+  const cx = Math.floor(gp.x);
+  const cy = Math.floor(gp.y);
+  return rooms.find(r => r.cells.some(c => c.x === cx && c.y === cy)) ?? null;
 }
 
-function findDiffuserAt(gp: GridPoint, diffs: Diffuser[]): Diffuser | null {
-  const EPS = 0.5;
-  return diffs.find(d => dist(d.position, gp) < EPS) ?? null;
-}
-
-function estimateCFMForPreview(ds: DuctSystem, start: GridPoint, isReturn: boolean): number {
-  // Simple: count diffuser CFMs that this run might be feeding
-  return ds.diffusers.filter(d => d.isReturn === isReturn).reduce((s, d) => s + d.cfm, 0) || 100;
-}
-
-function estimateCFMForSegment(
+function autoPlaceDiffuser(
   ds: DuctSystem,
-  start: GridPoint,
-  end: GridPoint,
+  position: GridPoint,
+  room: Room,
   isReturn: boolean,
-): number {
-  return estimateCFMForPreview(ds, start, isReturn);
+): DuctSystem {
+  const existing = ds.diffusers.filter(d => d.roomId === room.id && d.isReturn === isReturn).length;
+  const count = existing + 1;
+  const { cfm, size } = sizeDiffusersForRoom(room.cfm, count);
+  const newDiff: Diffuser = { id: uid(), position, roomId: room.id, size, cfm, isReturn };
+  return {
+    ...ds,
+    diffusers: [
+      ...ds.diffusers.map(d =>
+        d.roomId === room.id && d.isReturn === isReturn ? { ...d, cfm, size } : d
+      ),
+      newDiff,
+    ],
+  };
 }
 
-function getCursor(tool: DrawingTool): string {
-  switch (tool) {
-    case 'duct_supply': case 'duct_return': return 'crosshair';
-    case 'diffuser_supply': case 'diffuser_return': return 'cell';
-    case 'eraser': return 'not-allowed';
-    default: return 'default';
+function estimateCFM(ds: DuctSystem, isReturn: boolean): number {
+  const total = ds.diffusers.filter(d => d.isReturn === isReturn).reduce((s, d) => s + d.cfm, 0);
+  return total || 100;
+}
+
+interface ElbowPoint { point: GridPoint; size: DuctSize; isReturn: boolean }
+
+function findElbowPoints(segs: DuctSegment[]): ElbowPoint[] {
+  type Entry = { count: number; size: DuctSize; isReturn: boolean };
+  const map = new Map<string, Entry>();
+
+  for (const seg of segs) {
+    for (const pt of [seg.start, seg.end]) {
+      const k = `${pt.x},${pt.y}`;
+      const e = map.get(k);
+      if (e) { e.count++; }
+      else { map.set(k, { count: 1, size: seg.size, isReturn: seg.isReturn }); }
+    }
   }
+
+  const result: ElbowPoint[] = [];
+  for (const [key, entry] of map) {
+    if (entry.count >= 2) {
+      const [x, y] = key.split(',').map(Number);
+      result.push({ point: { x, y }, size: entry.size, isReturn: entry.isReturn });
+    }
+  }
+  return result;
+}
+
+function cursorFor(tool: DrawingTool): string {
+  if (tool === 'duct_supply' || tool === 'duct_return') return 'crosshair';
+  if (tool === 'diffuser_supply' || tool === 'diffuser_return') return 'cell';
+  if (tool === 'eraser') return 'not-allowed';
+  return 'default';
 }

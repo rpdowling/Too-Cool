@@ -177,8 +177,8 @@ export function buildOptimalDuctSystem(rooms: Room[], ahu: AHU): DuctSystem {
 
   for (const room of rooms) {
     const ctr = centroid(room.cells);
-    // Offset slightly to avoid overlap with supply
-    const retPt: GridPoint = { x: ctr.x + 0.5, y: ctr.y };
+    // Offset one grid unit right of supply — must stay on integer grid
+    const retPt: GridPoint = { x: Math.round(ctr.x) + 1, y: Math.round(ctr.y) };
     returnDiffusers.push({
       id: uid(),
       position: retPt,

@@ -19,16 +19,18 @@ import { uid } from './utils';
 function hEdgeKey(cx: number, cy: number) { return `h:${cx},${cy}`; }
 function vEdgeKey(cx: number, cy: number) { return `v:${cx},${cy}`; }
 
-/** Build a set of blocked edges from wall segments */
-function buildEdgeSet(walls: WallSegment[], doors: FloorPlan['doors']): Set<string> {
+/** Build a set of blocked edges from wall segments.
+ *  Doors and windows are also treated as opaque barriers for flood-fill —
+ *  a room is "enclosed" even with openings; access is validated separately. */
+function buildEdgeSet(
+  walls: WallSegment[],
+  doors: FloorPlan['doors'],
+  windows: FloorPlan['windows'],
+): Set<string> {
   const blocked = new Set<string>();
-
-  for (const w of walls) {
-    addEdgesForSegment(w.start, w.end, blocked);
-  }
-  // Doors create openings — we subtract them (not added to blocked set)
-  // Walls with doors are split in the level data, so doors don't overlap walls
-
+  for (const w of walls)   addEdgesForSegment(w.start, w.end, blocked);
+  for (const d of doors)   addEdgesForSegment(d.start, d.end, blocked);
+  for (const w of windows) addEdgesForSegment(w.start, w.end, blocked);
   return blocked;
 }
 
@@ -73,10 +75,11 @@ function addEdgesForSegment(a: GridPoint, b: GridPoint, out: Set<string>) {
 function floodFillOutside(
   walls: WallSegment[],
   doors: FloorPlan['doors'],
+  windows: FloorPlan['windows'],
   maxX: number,
   maxY: number,
 ): Set<string> {
-  const blocked = buildEdgeSet(walls, doors);
+  const blocked = buildEdgeSet(walls, doors, windows);
   const visited = new Set<string>();
 
   function key(x: number, y: number) { return `${x},${y}`; }
@@ -119,7 +122,7 @@ export function detectRooms(fp: FloorPlan): Room[] {
   const maxX = fp.gridWidth;
   const maxY = fp.gridHeight;
 
-  const outside = floodFillOutside(fp.walls, fp.doors, maxX, maxY);
+  const outside = floodFillOutside(fp.walls, fp.doors, fp.windows, maxX, maxY);
 
   // Find all interior cells
   const interior = new Set<string>();
