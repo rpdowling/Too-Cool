@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import type { Level, Room, DuctSystem, DrawingTool, DuctSize } from '../types';
+import type { Level, Room, DuctSystem, DrawingTool } from '../types';
 import type { ScoreBreakdown } from '../game/scoring';
-import { DUCT_MAX_CFM } from '../game/ductSizing';
 import { scoreSummary } from '../game/scoring';
 
 export type { ScoreBreakdown };
@@ -10,12 +9,10 @@ interface Props {
   level: Level;
   ductSystem: DuctSystem;
   activeTool: DrawingTool;
-  selectedSize: DuctSize;
   currentLayer: number;
   showOptimal: boolean;
   score: ScoreBreakdown | null;
   onToolChange: (t: DrawingTool) => void;
-  onSizeChange: (s: DuctSize) => void;
   onSubmit: () => void;
   onUndo: () => void;
   onClear: () => void;
@@ -32,8 +29,6 @@ const SUPPLY_TOOLS: { tool: DrawingTool; label: string }[] = [
   { tool: 'transition_drop', label: 'Drop ↓' },
   { tool: 'eraser', label: 'Eraser' },
 ];
-
-const SIZES: DuctSize[] = [4, 6, 8, 12];
 
 function roomSuppliedCFM(roomId: string, ds: DuctSystem): number {
   return ds.diffusers.filter(d => d.roomId === roomId && !d.isReturn)
@@ -82,8 +77,8 @@ function LoadCalcInfo() {
 }
 
 export function HUD({
-  level, ductSystem, activeTool, selectedSize, currentLayer, showOptimal, score,
-  onToolChange, onSizeChange, onSubmit, onUndo, onClear, onToggleOptimal, onBack,
+  level, ductSystem, activeTool, currentLayer, showOptimal, score,
+  onToolChange, onSubmit, onUndo, onClear, onToggleOptimal, onBack,
 }: Props) {
   return (
     <div className="hud">
@@ -103,24 +98,6 @@ export function HUD({
             </button>
           ))}
         </div>
-
-        {(activeTool === 'duct_supply' || activeTool === 'duct_return') && (
-          <>
-            <div className="panel-title" style={{ marginTop: 16 }}>Duct Size</div>
-            <div className="tool-group">
-              {SIZES.map(s => (
-                <button
-                  key={s}
-                  className={`tool-btn size-btn ${selectedSize === s ? 'active' : ''}`}
-                  onClick={() => onSizeChange(s)}
-                >
-                  {s}"
-                  <span className="size-cfm">≤{DUCT_MAX_CFM[s]}</span>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
 
         {currentLayer > 0 && (
           <div className="layer-badge">Layer {currentLayer + 1} ↑</div>
