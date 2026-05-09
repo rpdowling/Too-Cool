@@ -1,20 +1,22 @@
 /**
  * Level 3 – "Glass Corridor"
  *
- * An 8 × 8 m building arranged in three horizontal bands:
+ * A dumbbell-shaped 14 × 6 m building:
  *
- *   ┌──┬──────────────────────────────────┬──┐  y=0
- *   │  │       Room A  (8 × 3 m)          │  │
- *   │  │       north window + door        │  │
- *   ├──╤══════════════════════════════╤───┤  y=3  (glass + door between A & hall)
- *   │  │   Glass Hallway  (8 × 2 m)  │   │
- *   ├──╧══════════════════════════════╧───┤  y=5  (glass + door between hall & B)
- *   │  │       Room B  (8 × 3 m)          │  │
- *   │  │       south window + door (high  │  │
- *   └──┴──────────────────────────────────┴──┘  y=8   solar load on Room B!)
+ *   ┌──────────┐                    ┌──────────┐
+ *   │          │  ╔══════════════╗  │          │
+ *   │  Room A  ╠══╣ Glass Hall  ╠══╣  Room B  │
+ *   │  (4×6)   │  ║   (6×2)    ║  │  (4×6)   │
+ *   └──────────┘  ╚══════════════╝  └──────────┘
  *
- * AHU south of building at x=3–5, supply trunk runs straight north
- * through Room B → hallway → Room A.
+ * ══ = window (hallway north & south walls are fully glazed)
+ *
+ * Room A (left) — x=0–3, y=0–5 — north window + south door
+ * Hallway (centre) — x=4–9, y=2–3 — north & south glass exterior
+ * Room B (right) — x=10–13, y=0–5 — north window + south door
+ *
+ * The south-facing hallway glass carries 200 BTU/hr·ft² solar — hottest zone.
+ * AHU sits south of Room A; optimal trunk: Room A → corridor → Room B.
  */
 import type { Level, FloorPlan, AHU, Room, DuctSystem } from '../types';
 import { calcFloorplanLoads, totalCFM } from '../game/loadCalc';
@@ -24,47 +26,52 @@ import { buildOptimalDuctSystem, totalDuctLength } from '../game/steinertree';
 // ─── Floor plan ───────────────────────────────────────────────────────────────
 
 const fp: FloorPlan = {
-  gridWidth:  8,
-  gridHeight: 8,
+  gridWidth:  14,
+  gridHeight: 6,
 
   walls: [
-    // North exterior wall (Room A) — split around door at x=1–2 and window at x=2–6
-    { id: 'w-n1', start: { x: 0, y: 0 }, end: { x: 1, y: 0 }, wallType: 'normal', isExterior: true },
-    { id: 'w-n2', start: { x: 6, y: 0 }, end: { x: 8, y: 0 }, wallType: 'normal', isExterior: true },
-    // South exterior wall (Room B) — split around door at x=2–3 and window at x=5–8
-    { id: 'w-s1', start: { x: 0, y: 8 }, end: { x: 2, y: 8 }, wallType: 'normal', isExterior: true },
-    { id: 'w-s2', start: { x: 3, y: 8 }, end: { x: 5, y: 8 }, wallType: 'normal', isExterior: true },
-    // West and east exterior walls
-    { id: 'w-w',  start: { x: 0, y: 0 }, end: { x: 0, y: 8 }, wallType: 'normal', isExterior: true },
-    { id: 'w-e',  start: { x: 8, y: 0 }, end: { x: 8, y: 8 }, wallType: 'normal', isExterior: true },
-    // Interior wall Room A ↔ Hallway at y=3 (flanking the glass and door)
-    { id: 'w-ah1', start: { x: 0, y: 3 }, end: { x: 2, y: 3 }, wallType: 'normal', isExterior: false },
-    { id: 'w-ah2', start: { x: 7, y: 3 }, end: { x: 8, y: 3 }, wallType: 'normal', isExterior: false },
-    // Interior wall Hallway ↔ Room B at y=5 (flanking the glass and door)
-    { id: 'w-hb1', start: { x: 0, y: 5 }, end: { x: 1, y: 5 }, wallType: 'normal', isExterior: false },
-    { id: 'w-hb2', start: { x: 6, y: 5 }, end: { x: 8, y: 5 }, wallType: 'normal', isExterior: false },
+    // Room A – north exterior wall (split around 2 m window at x=2–4)
+    { id: 'w-an1', start: { x: 0, y: 0 }, end: { x: 2, y: 0 }, wallType: 'normal', isExterior: true },
+    // Room A – south exterior wall (split around 1 m door at x=1–2)
+    { id: 'w-as1', start: { x: 0, y: 6 }, end: { x: 1, y: 6 }, wallType: 'normal', isExterior: true },
+    { id: 'w-as2', start: { x: 2, y: 6 }, end: { x: 4, y: 6 }, wallType: 'normal', isExterior: true },
+    // West exterior wall
+    { id: 'w-w',   start: { x: 0, y: 0 }, end: { x: 0, y: 6 }, wallType: 'normal', isExterior: true },
+    // Interior wall Room A ↔ Hallway (x=4), split around 2 m doorway at y=2–4
+    { id: 'w-ah1', start: { x: 4, y: 0 }, end: { x: 4, y: 2 }, wallType: 'normal', isExterior: false },
+    { id: 'w-ah2', start: { x: 4, y: 4 }, end: { x: 4, y: 6 }, wallType: 'normal', isExterior: false },
+    // Interior wall Hallway ↔ Room B (x=10), split around 2 m doorway at y=2–4
+    { id: 'w-hb1', start: { x: 10, y: 0 }, end: { x: 10, y: 2 }, wallType: 'normal', isExterior: false },
+    { id: 'w-hb2', start: { x: 10, y: 4 }, end: { x: 10, y: 6 }, wallType: 'normal', isExterior: false },
+    // Room B – north exterior wall (split around 2 m window at x=12–14)
+    { id: 'w-bn1', start: { x: 10, y: 0 }, end: { x: 12, y: 0 }, wallType: 'normal', isExterior: true },
+    // Room B – south exterior wall (split around 1 m door at x=12–13)
+    { id: 'w-bs1', start: { x: 10, y: 6 }, end: { x: 12, y: 6 }, wallType: 'normal', isExterior: true },
+    { id: 'w-bs2', start: { x: 13, y: 6 }, end: { x: 14, y: 6 }, wallType: 'normal', isExterior: true },
+    // East exterior wall
+    { id: 'w-e',   start: { x: 14, y: 0 }, end: { x: 14, y: 6 }, wallType: 'normal', isExterior: true },
   ],
 
   windows: [
-    // Room A – north exterior window (4 m, x=2–6, faces north — low solar)
-    { id: 'win-a',  start: { x: 2, y: 0 }, end: { x: 6, y: 0 } },
-    // Hallway north glass (between Room A and Hallway, 4 m)
-    { id: 'win-hn', start: { x: 2, y: 3 }, end: { x: 6, y: 3 } },
-    // Hallway south glass (between Hallway and Room B, 4 m)
-    { id: 'win-hs', start: { x: 2, y: 5 }, end: { x: 6, y: 5 } },
-    // Room B – south exterior window (3 m, x=5–8, faces south — max solar 200 BTU/hr·ft²)
-    { id: 'win-b',  start: { x: 5, y: 8 }, end: { x: 8, y: 8 } },
+    // Room A – north window (2 m)
+    { id: 'win-a',  start: { x: 2,  y: 0 }, end: { x: 4,  y: 0 } },
+    // Hallway – north exterior glass (6 m, faces north, low solar 30)
+    { id: 'win-hn', start: { x: 4,  y: 2 }, end: { x: 10, y: 2 } },
+    // Hallway – south exterior glass (6 m, faces south, max solar 200)
+    { id: 'win-hs', start: { x: 4,  y: 4 }, end: { x: 10, y: 4 } },
+    // Room B – north window (2 m)
+    { id: 'win-b',  start: { x: 12, y: 0 }, end: { x: 14, y: 0 } },
   ],
 
   doors: [
-    // Room A – north exterior door (x=1–2)
-    { id: 'door-a',  start: { x: 1, y: 0 }, end: { x: 2, y: 0 }, isExterior: true },
-    // Room B – south exterior door (x=2–3)
-    { id: 'door-b',  start: { x: 2, y: 8 }, end: { x: 3, y: 8 }, isExterior: true },
-    // Interior doorway: Room A ↔ Hallway at y=3, x=6–7
-    { id: 'door-ah', start: { x: 6, y: 3 }, end: { x: 7, y: 3 }, isExterior: false },
-    // Interior doorway: Hallway ↔ Room B at y=5, x=1–2
-    { id: 'door-hb', start: { x: 1, y: 5 }, end: { x: 2, y: 5 }, isExterior: false },
+    // Room A – south exterior door (1 m, x=1–2)
+    { id: 'door-a',  start: { x: 1,  y: 6 }, end: { x: 2,  y: 6 }, isExterior: true },
+    // Room B – south exterior door (1 m, x=12–13)
+    { id: 'door-b',  start: { x: 12, y: 6 }, end: { x: 13, y: 6 }, isExterior: true },
+    // Interior doorway: Room A ↔ Hallway (2 m, y=2–4)
+    { id: 'door-ah', start: { x: 4,  y: 2 }, end: { x: 4,  y: 4 }, isExterior: false },
+    // Interior doorway: Hallway ↔ Room B (2 m, y=2–4)
+    { id: 'door-hb', start: { x: 10, y: 2 }, end: { x: 10, y: 4 }, isExterior: false },
   ],
 
   vents: [],
@@ -72,12 +79,12 @@ const fp: FloorPlan = {
 
 // ─── AHU ──────────────────────────────────────────────────────────────────────
 
-// Centred below Room B; supply trunk runs straight north through all three zones.
+// South of Room A — supply trunk runs east through the corridor to Room B.
 const ahu: AHU = {
-  position:   { x: 3, y: 9 },
+  position:   { x: 1, y: 7 },
   totalCFM:   0,
-  supplyPort: { x: 4, y: 9 },
-  returnPort: { x: 5, y: 9 },
+  supplyPort: { x: 2, y: 7 },
+  returnPort: { x: 3, y: 7 },
 };
 
 // ─── Build level ──────────────────────────────────────────────────────────────
@@ -93,7 +100,7 @@ function buildLevel(): Level {
   return {
     id: 3,
     name: 'Glass Corridor',
-    description: 'Two rooms stacked above and below a wide glass hallway — the south-facing window in Room B drives a heavy cooling load. Route a vertical trunk from the AHU through all three zones.',
+    description: 'Two large rooms connected by a long glass hallway — the south-facing corridor glass cranks up the hallway load. Route your trunk east through the corridor and branch into each room.',
     floorplan: fp,
     ahu: ahuFinal,
     rooms,

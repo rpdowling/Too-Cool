@@ -25,8 +25,6 @@ const SUPPLY_TOOLS: { tool: DrawingTool; label: string }[] = [
   { tool: 'diffuser_supply', label: 'Supply Diff.' },
   { tool: 'duct_return', label: 'Return Duct' },
   { tool: 'diffuser_return', label: 'Return Grille' },
-  { tool: 'transition_rise', label: 'Rise ↑' },
-  { tool: 'transition_drop', label: 'Drop ↓' },
   { tool: 'eraser', label: 'Eraser' },
 ];
 
@@ -99,8 +97,22 @@ export function HUD({
           ))}
         </div>
 
-        {currentLayer > 0 && (
-          <div className="layer-badge">Layer {currentLayer + 1} ↑</div>
+        {(activeTool === 'duct_supply' || activeTool === 'duct_return') && (
+          <>
+            <div className="panel-title" style={{ marginTop: 16 }}>Duct Size</div>
+            <div className="tool-group">
+              {SIZES.map(s => (
+                <button
+                  key={s}
+                  className={`tool-btn size-btn ${selectedSize === s ? 'active' : ''}`}
+                  onClick={() => onSizeChange(s)}
+                >
+                  {s}"
+                  <span className="size-cfm">≤{DUCT_MAX_CFM[s]}</span>
+                </button>
+              ))}
+            </div>
+          </>
         )}
 
         <div className="hud-actions">
