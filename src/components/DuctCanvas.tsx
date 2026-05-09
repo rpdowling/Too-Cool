@@ -24,7 +24,7 @@ import type {
 } from '../types';
 import {
   GRID_PX, CANVAS_PAD, gridToPixel, pixelToGrid, snapToGridPoint,
-  uid, dist, segLen,
+  uid, dist, segLen, isOnWallOrDoor,
 } from '../game/utils';
 import { autoSizeDuct, DUCT_MAX_CFM, ductLineGap, sizeDiffusersForRoom } from '../game/ductSizing';
 import { computeServedRooms } from '../game/connectivity';
@@ -219,6 +219,7 @@ export function DuctCanvas({
   function placeDiffuser(gp: GridPoint, isReturn: boolean) {
     const room = roomAtPoint(gp, level.rooms);
     if (!room) return;
+    if (isOnWallOrDoor(gp, level.floorplan)) return;
     // Short-circuit rule: supply and return can't be within 2 grid units of each other
     const opposite = ductSystem.diffusers.filter(d => d.roomId === room.id && d.isReturn !== isReturn);
     if (opposite.some(d => dist(d.position, gp) < 2.0)) return;

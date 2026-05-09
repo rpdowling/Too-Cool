@@ -1,4 +1,4 @@
-import type { GridPoint } from '../types';
+import type { GridPoint, FloorPlan } from '../types';
 
 export const GRID_PX = 64;          // pixels per grid unit (1 m)
 export const CANVAS_PAD = 80;       // px padding around content
@@ -95,4 +95,24 @@ export function snapDuctAngle(start: GridPoint, raw: GridPoint): GridPoint {
 /** Same snap for wall drawing (allows 45°) */
 export function snapWallAngle(start: GridPoint, raw: GridPoint): GridPoint {
   return snapDuctAngle(start, raw);
+}
+
+/** True if grid point p lies exactly on any wall, door, or window segment. */
+export function isOnWallOrDoor(p: GridPoint, fp: FloorPlan): boolean {
+  const { x: gx, y: gy } = p;
+  const segs = [...fp.walls, ...fp.doors, ...fp.windows] as { start: GridPoint; end: GridPoint }[];
+  for (const s of segs) {
+    if (s.start.x === s.end.x && s.start.x === gx) {
+      // Vertical segment
+      const minY = Math.min(s.start.y, s.end.y);
+      const maxY = Math.max(s.start.y, s.end.y);
+      if (minY <= gy && gy <= maxY) return true;
+    } else if (s.start.y === s.end.y && s.start.y === gy) {
+      // Horizontal segment
+      const minX = Math.min(s.start.x, s.end.x);
+      const maxX = Math.max(s.start.x, s.end.x);
+      if (minX <= gx && gx <= maxX) return true;
+    }
+  }
+  return false;
 }

@@ -34,9 +34,9 @@ const fp: FloorPlan = {
     { id: 'w-s1', start: { x: 0, y: 6 }, end: { x: 1, y: 6 }, wallType: 'normal', isExterior: true },
     { id: 'w-s2', start: { x: 2, y: 6 }, end: { x: 6, y: 6 }, wallType: 'normal', isExterior: true },
     { id: 'w-s3', start: { x: 7, y: 6 }, end: { x: 8, y: 6 }, wallType: 'normal', isExterior: true },
-    // Interior wall (split around doorway at y=2–4)
+    // Interior wall (split around 1 m doorway at y=2–3)
     { id: 'w-i1', start: { x: 4, y: 0 }, end: { x: 4, y: 2 }, wallType: 'normal', isExterior: false },
-    { id: 'w-i2', start: { x: 4, y: 4 }, end: { x: 4, y: 6 }, wallType: 'normal', isExterior: false },
+    { id: 'w-i2', start: { x: 4, y: 3 }, end: { x: 4, y: 6 }, wallType: 'normal', isExterior: false },
   ],
 
   windows: [
@@ -47,7 +47,7 @@ const fp: FloorPlan = {
   doors: [
     { id: 'door-a',   start: { x: 1, y: 6 }, end: { x: 2, y: 6 }, isExterior: true  }, // Living Room south
     { id: 'door-b',   start: { x: 6, y: 6 }, end: { x: 7, y: 6 }, isExterior: true  }, // Bedroom south
-    { id: 'door-int', start: { x: 4, y: 2 }, end: { x: 4, y: 4 }, isExterior: false }, // Interior doorway
+    { id: 'door-int', start: { x: 4, y: 2 }, end: { x: 4, y: 3 }, isExterior: false }, // Interior doorway (1 m)
   ],
 
   vents: [],
@@ -69,7 +69,7 @@ function buildLevel(): Level {
   const rooms: Room[] = calcFloorplanLoads(rawRooms, fp);
   const total = totalCFM(rooms);
   const ahuFinal: AHU = { ...ahu, totalCFM: total };
-  const optimal: DuctSystem = buildOptimalDuctSystem(rooms, ahuFinal);
+  const optimal: DuctSystem = buildOptimalDuctSystem(rooms, ahuFinal, fp);
   const optLen = totalDuctLength(optimal);
 
   return {
