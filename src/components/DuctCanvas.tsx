@@ -164,13 +164,14 @@ export function DuctCanvas({
 
     const { seg1, seg2 } = lRoute(s.drawStart, endPt);
     const newSegs: DuctSegment[] = [];
-    if (seg1) newSegs.push({ id: uid(), ...seg1, size: selectedSize, cfm, layer: currentLayer, isReturn });
-    if (seg2) newSegs.push({ id: uid(), ...seg2, size: selectedSize, cfm, layer: currentLayer, isReturn });
+    if (seg1) newSegs.push({ id: uid(), ...seg1, size: selectedSize, cfm, layer: 0, isReturn });
+    if (seg2) newSegs.push({ id: uid(), ...seg2, size: selectedSize, cfm, layer: 0, isReturn });
 
-    const newSystem: DuctSystem = { ...ductSystem, segments: [...ductSystem.segments, ...newSegs] };
-
+    const conflicts = newSegs.some(ns => ductSystem.segments.some(es => segmentsConflict(ns, es)));
     s.drawStart = null;
-    onDuctSystemChange(newSystem);
+    if (conflicts) { render(); return; }
+
+    onDuctSystemChange({ ...ductSystem, segments: [...ductSystem.segments, ...newSegs] });
     render();
   }
 
@@ -220,7 +221,7 @@ export function DuctCanvas({
     const room = roomAtPoint(gp, level.rooms);
     if (!room) return;
     if (isOnWallOrDoor(gp, level.floorplan)) return;
-    // Short-circuit rule: supply and return can't be within 2 grid units of each other
+    if (isDuctFitting(gp, ductSystem.segments)) return;
     const opposite = ductSystem.diffusers.filter(d => d.roomId === room.id && d.isReturn !== isReturn);
     if (opposite.some(d => dist(d.position, gp) < 2.0)) return;
     onDuctSystemChange(autoPlaceDiffuser(ductSystem, gp, room, isReturn));
@@ -431,10 +432,15 @@ function drawDiffuser(
   ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
   ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
   ctx.beginPath();
-  ctx.moveTo(p.x - r * 0.68, p.y - r * 0.68);
-  ctx.lineTo(p.x + r * 0.68, p.y + r * 0.68);
-  ctx.moveTo(p.x + r * 0.68, p.y - r * 0.68);
-  ctx.lineTo(p.x - r * 0.68, p.y + r * 0.68);
+  if (d.isReturn) {
+    ctx.moveTo(p.x - r * 0.68, p.y);
+    ctx.lineTo(p.x + r * 0.68, p.y);
+  } else {
+    ctx.moveTo(p.x - r * 0.68, p.y - r * 0.68);
+    ctx.lineTo(p.x + r * 0.68, p.y + r * 0.68);
+    ctx.moveTo(p.x + r * 0.68, p.y - r * 0.68);
+    ctx.lineTo(p.x - r * 0.68, p.y + r * 0.68);
+  }
   ctx.stroke();
   ctx.fillStyle = color;
   ctx.font = `${GRID_PX * 0.155}px monospace`;
@@ -565,4 +571,43 @@ function cursorFor(tool: DrawingTool): string {
   if (tool === 'diffuser_supply' || tool === 'diffuser_return') return 'cell';
   if (tool === 'eraser') return 'not-allowed';
   return 'default';
+}
+
+/** True if new segment a would cross or overlap existing segment b (T-junctions allowed). */
+function segmentsConflict(a: DuctSegment, b: DuctSegment): boolean {
+  const aHoriz = a.start.y === a.end.y;
+  const bHoriz = b.start.y === b.end.y;
+
+  if (aHoriz === bHoriz) {
+    if (aHoriz) {
+      if (a.start.y !== b.start.y) return false;
+      const ax1 = Math.min(a.start.x, a.end.x), ax2 = Math.max(a.start.x, a.end.x);
+      const bx1 = Math.min(b.start.x, b.end.x), bx2 = Math.max(b.start.x, b.end.x);
+      return ax1 < bx2 && bx1 < ax2;
+    } else {
+      if (a.start.x !== b.start.x) return false;
+      const ay1 = Math.min(a.start.y, a.end.y), ay2 = Math.max(a.start.y, a.end.y);
+      const by1 = Math.min(b.start.y, b.end.y), by2 = Math.max(b.start.y, b.end.y);
+      return ay1 < by2 && by1 < ay2;
+    }
+  }
+
+  const [h, v] = aHoriz ? [a, b] : [b, a];
+  const hx1 = Math.min(h.start.x, h.end.x), hx2 = Math.max(h.start.x, h.end.x);
+  const hy = h.start.y;
+  const vx = v.start.x;
+  const vy1 = Math.min(v.start.y, v.end.y), vy2 = Math.max(v.start.y, v.end.y);
+  return vx > hx1 && vx < hx2 && hy > vy1 && hy < vy2;
+}
+
+/** True if gp is a duct fitting: shared by 2 or more segment endpoints (elbow/junction). */
+function isDuctFitting(gp: GridPoint, segments: DuctSegment[]): boolean {
+  let endpoints = 0;
+  for (const seg of segments) {
+    if ((seg.start.x === gp.x && seg.start.y === gp.y) ||
+        (seg.end.x   === gp.x && seg.end.y   === gp.y)) {
+      if (++endpoints >= 2) return true;
+    }
+  }
+  return false;
 }
