@@ -5,6 +5,7 @@ import { FloorplanCanvas } from './FloorplanCanvas';
 import { DuctCanvas } from './DuctCanvas';
 import { HUD } from './HUD';
 import { scoreSystem } from '../game/scoring';
+import { GRID_PX, CANVAS_PAD } from '../game/utils';
 
 interface Props {
   level: Level;
@@ -14,6 +15,7 @@ interface Props {
   onScore: (levelId: number, score: number) => void;
 }
 
+const EXTRA_BELOW = 4; // grid rows of space south of building for AHU
 const EMPTY_SYSTEM: DuctSystem = { segments: [], transitions: [], diffusers: [] };
 
 export function Game({ level, settings, onNavigate, highScores, onScore }: Props) {
@@ -23,15 +25,16 @@ export function Game({ level, settings, onNavigate, highScores, onScore }: Props
   const [currentLayer, setCurrentLayer] = useState(0);
   const [showOptimal, setShowOptimal] = useState(false);
   const [score, setScore] = useState<ScoreBreakdown | null>(null);
-  const [canvasSize, setCanvasSize] = useState({ w: 600, h: 700 });
-
-  // History for undo
   const [history, setHistory] = useState<DuctSystem[]>([EMPTY_SYSTEM]);
+
+  // Canvas size is deterministic — compute directly, no callback needed
+  const canvasW = CANVAS_PAD * 2 + level.floorplan.gridWidth  * GRID_PX;
+  const canvasH = CANVAS_PAD * 2 + (level.floorplan.gridHeight + EXTRA_BELOW) * GRID_PX;
 
   const handleDuctSystemChange = useCallback((ds: DuctSystem) => {
     setHistory(h => [...h.slice(-30), ds]);
     setDuctSystem(ds);
-    setScore(null); // clear score on change
+    setScore(null);
   }, []);
 
   function handleUndo() {
@@ -51,9 +54,7 @@ export function Game({ level, settings, onNavigate, highScores, onScore }: Props
   function handleSubmit() {
     const s = scoreSystem(level, ductSystem);
     setScore(s);
-    if (s.total > (highScores[level.id] ?? 0)) {
-      onScore(level.id, s.total);
-    }
+    if (s.total > (highScores[level.id] ?? 0)) onScore(level.id, s.total);
   }
 
   return (
@@ -76,18 +77,17 @@ export function Game({ level, settings, onNavigate, highScores, onScore }: Props
       />
 
       <div className="canvas-viewport">
-        <div className="canvas-stack" style={{ position: 'relative', width: canvasSize.w, height: canvasSize.h }}>
+        <div className="canvas-stack" style={{ position: 'relative', width: canvasW, height: canvasH }}>
           <FloorplanCanvas
             floorplan={level.floorplan}
             rooms={level.rooms}
             ahu={level.ahu}
             settings={settings}
-            extraBelow={4}
-            onSize={(w, h) => setCanvasSize({ w, h })}
+            extraBelow={EXTRA_BELOW}
           />
           <DuctCanvas
-            width={canvasSize.w}
-            height={canvasSize.h}
+            width={canvasW}
+            height={canvasH}
             level={level}
             ductSystem={ductSystem}
             activeTool={activeTool}

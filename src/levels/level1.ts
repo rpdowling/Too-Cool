@@ -53,10 +53,10 @@ const fp: FloorPlan = {
 // ─── AHU ──────────────────────────────────────────────────────────────────────
 
 const ahu: AHU = {
-  position:    { x: 2, y: 7 },      // top-left of 2 × 3 area
-  totalCFM:    0,                    // filled in below
-  supplyPort:  { x: 2.5, y: 7 },    // left column, top of AHU
-  returnPort:  { x: 3.5, y: 7 },    // right column, top of AHU
+  position:   { x: 2, y: 7 },   // top-left of 2 × 3 area
+  totalCFM:   0,                 // filled in below
+  supplyPort: { x: 3, y: 7 },   // center-top of AHU — integer grid, routes straight north to room
+  returnPort: { x: 4, y: 7 },   // right-top of AHU — integer grid
 };
 
 // ─── Build level at module load ───────────────────────────────────────────────

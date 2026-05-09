@@ -20,10 +20,8 @@ interface Props {
   rooms: Room[];
   ahu: AHU;
   settings: AppSettings;
-  /** Extra canvas height/width to add below/right the building for AHU area */
+  /** Extra grid rows to add below the building for AHU area */
   extraBelow?: number;
-  /** called back with the final canvas pixel dimensions so DuctCanvas can match */
-  onSize?: (w: number, h: number) => void;
 }
 
 // Colours
@@ -44,7 +42,7 @@ function calcCanvasSize(fp: FloorPlan, extraBelow: number) {
   return { w, h };
 }
 
-export function FloorplanCanvas({ floorplan, rooms, ahu, settings, extraBelow = 4, onSize }: Props) {
+export function FloorplanCanvas({ floorplan, rooms, ahu, settings, extraBelow = 4 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -53,11 +51,9 @@ export function FloorplanCanvas({ floorplan, rooms, ahu, settings, extraBelow = 
     const { w, h } = calcCanvasSize(floorplan, extraBelow);
     canvas.width = w;
     canvas.height = h;
-    onSize?.(w, h);
-
     const ctx = canvas.getContext('2d')!;
     draw(ctx, floorplan, rooms, ahu, settings, w, h);
-  });
+  }, [floorplan, rooms, ahu, settings, extraBelow]);
 
   const { w, h } = calcCanvasSize(floorplan, extraBelow);
 
