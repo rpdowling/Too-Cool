@@ -24,7 +24,7 @@ export interface ScoreBreakdown {
 /** Score player's duct system */
 export function scoreSystem(level: Level, player: DuctSystem): ScoreBreakdown {
   // ── Coverage: requires supply AND return diffuser, each connected to AHU ──
-  const servedRooms  = computeServedRooms(player, level.ahu);
+  const servedRooms  = computeServedRooms(player, level.ahu, level.rooms);
   const supplyServed = computeSupplyServedRooms(player, level.ahu);
 
   const unservedRooms: string[] = [];
