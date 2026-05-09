@@ -27,7 +27,7 @@ import {
   uid, dist, segLen, isOnWallOrDoor,
 } from '../game/utils';
 import { autoSizeDuct, DUCT_MAX_CFM, ductLineGap, sizeDiffusersForRoom } from '../game/ductSizing';
-import { computeServedRooms } from '../game/connectivity';
+import { computeServedRooms, computeSupplyServedRooms } from '../game/connectivity';
 
 interface Props {
   width: number;
@@ -479,12 +479,20 @@ function drawServedRoomOverlay(
   level: Level,
   ds: DuctSystem,
 ) {
-  const served = computeServedRooms(ds, level.ahu);
-  if (served.size === 0) return;
+  const fullyServed = computeServedRooms(ds, level.ahu);
+  const supplyOnly  = computeSupplyServedRooms(ds, level.ahu);
+
   ctx.save();
-  ctx.fillStyle = 'rgba(52, 211, 153, 0.32)';
   for (const room of level.rooms) {
-    if (!served.has(room.id)) continue;
+    if (fullyServed.has(room.id)) {
+      // Blue: supply + return both connected to AHU
+      ctx.fillStyle = 'rgba(59, 130, 246, 0.30)';
+    } else if (supplyOnly.has(room.id)) {
+      // Amber: supply connected but no return yet
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.22)';
+    } else {
+      continue;
+    }
     for (const cell of room.cells) {
       const { x, y } = gridToPixel(cell);
       ctx.fillRect(x, y, GRID_PX, GRID_PX);

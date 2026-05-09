@@ -24,11 +24,24 @@ function makeLevel(roomCFM = 150, optimalLength = 10): Level {
 
 const EMPTY_SYSTEM: DuctSystem = { segments: [], transitions: [], diffusers: [] };
 
-// Supply duct from AHU port (3,7) to room point (3,3) + diffuser at endpoint
-const CONNECTED_SYSTEM: DuctSystem = {
+// Supply duct + diffuser only — no return
+const SUPPLY_ONLY_SYSTEM: DuctSystem = {
   ...EMPTY_SYSTEM,
   segments: [{ id: 's1', start: { x: 3, y: 7 }, end: { x: 3, y: 3 }, size: 6, cfm: 150, layer: 0, isReturn: false }],
   diffusers: [{ id: 'd1', position: { x: 3, y: 3 }, roomId: 'r1', size: 6, cfm: 150, isReturn: false }],
+};
+
+// Supply + return both connected to AHU
+const FULL_SYSTEM: DuctSystem = {
+  ...EMPTY_SYSTEM,
+  segments: [
+    { id: 's1', start: { x: 3, y: 7 }, end: { x: 3, y: 3 }, size: 6, cfm: 150, layer: 0, isReturn: false },
+    { id: 'r1', start: { x: 3, y: 5 }, end: { x: 4, y: 7 }, size: 6, cfm: 150, layer: 0, isReturn: true },
+  ],
+  diffusers: [
+    { id: 'd1', position: { x: 3, y: 3 }, roomId: 'r1', size: 6, cfm: 150, isReturn: false },
+    { id: 'd2', position: { x: 3, y: 5 }, roomId: 'r1', size: 6, cfm: 150, isReturn: true },
+  ],
 };
 
 describe('scoreSystem', () => {
@@ -38,7 +51,7 @@ describe('scoreSystem', () => {
     expect(s.unservedRooms).toContain('r1');
   });
 
-  it('scores 0 coverage when diffuser exists but is not connected to AHU', () => {
+  it('scores 0 coverage when supply diffuser exists but no duct connects it to AHU', () => {
     const ds: DuctSystem = {
       ...EMPTY_SYSTEM,
       diffusers: [{ id: 'd1', position: { x: 3, y: 3 }, roomId: 'r1', size: 6, cfm: 150, isReturn: false }],
@@ -48,9 +61,16 @@ describe('scoreSystem', () => {
     expect(s.unservedRooms).toContain('r1');
   });
 
-  it('scores full coverage when room has a supply diffuser connected to AHU', () => {
-    const s = scoreSystem(makeLevel(), CONNECTED_SYSTEM);
+  it('scores 0 coverage when only supply is connected — return duct required', () => {
+    const s = scoreSystem(makeLevel(), SUPPLY_ONLY_SYSTEM);
+    expect(s.coverage).toBe(0);
+    expect(s.missingReturnRooms).toContain('r1');
+  });
+
+  it('scores full coverage when room has supply AND return both connected to AHU', () => {
+    const s = scoreSystem(makeLevel(), FULL_SYSTEM);
     expect(s.coverage).toBe(40);
+    expect(s.missingReturnRooms).toHaveLength(0);
   });
 
   it('efficiency is 0 when no segments placed', () => {
@@ -59,19 +79,24 @@ describe('scoreSystem', () => {
   });
 
   it('total = coverage + efficiency + sizing', () => {
-    const s = scoreSystem(makeLevel(), CONNECTED_SYSTEM);
+    const s = scoreSystem(makeLevel(), FULL_SYSTEM);
     expect(s.total).toBe(s.coverage + s.efficiency + s.sizing);
   });
 });
 
 describe('scoreSummary', () => {
-  it('returns "Excellent" for score >= 90', () => {
-    expect(scoreSummary({ total: 95, coverage: 40, efficiency: 40, sizing: 15, unservedRooms: [], excessLengthPct: 0 }))
+  it('returns "Excellent" for score >= 90 with all rooms served', () => {
+    expect(scoreSummary({ total: 95, coverage: 40, efficiency: 40, sizing: 15, unservedRooms: [], missingReturnRooms: [], excessLengthPct: 0 }))
       .toMatch(/Excellent/);
   });
 
-  it('returns "Keep practicing" for score < 50', () => {
-    expect(scoreSummary({ total: 20, coverage: 0, efficiency: 0, sizing: 20, unservedRooms: ['r1'], excessLengthPct: 0 }))
+  it('returns return-duct hint when rooms have supply but no return', () => {
+    expect(scoreSummary({ total: 0, coverage: 0, efficiency: 0, sizing: 0, unservedRooms: ['r1'], missingReturnRooms: ['r1'], excessLengthPct: 0 }))
+      .toMatch(/return/i);
+  });
+
+  it('returns "Keep practicing" for low score with all rooms served', () => {
+    expect(scoreSummary({ total: 20, coverage: 40, efficiency: 0, sizing: 0, unservedRooms: [], missingReturnRooms: [], excessLengthPct: 0 }))
       .toMatch(/practicing/);
   });
 });

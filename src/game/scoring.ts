@@ -2,31 +2,38 @@
  * Score the player's duct system against the pre-solved optimal.
  *
  * Scoring rubric (100 pts total):
- *   40 pts – room coverage (supply diffuser reachable from AHU via duct path)
+ *   40 pts – room coverage (supply + return diffuser each connected to AHU)
  *   40 pts – duct efficiency (closeness to optimal total length)
  *   20 pts – proper duct sizing (no significantly oversized/undersized runs)
  */
 import type { DuctSystem, Level } from '../types';
 import { totalDuctLength } from './steinertree';
 import { DUCT_MAX_CFM } from './ductSizing';
-import { computeServedRooms } from './connectivity';
+import { computeServedRooms, computeSupplyServedRooms } from './connectivity';
 
 export interface ScoreBreakdown {
   total: number;          // 0–100
   coverage: number;       // 0–40
   efficiency: number;     // 0–40
   sizing: number;         // 0–20
-  unservedRooms: string[];
+  unservedRooms: string[];        // rooms missing supply or return connection
+  missingReturnRooms: string[];   // rooms that have supply but no connected return
   excessLengthPct: number;
 }
 
 /** Score player's duct system */
 export function scoreSystem(level: Level, player: DuctSystem): ScoreBreakdown {
-  // ── Coverage: requires diffuser connected to AHU via supply duct ──
-  const servedRooms = computeServedRooms(player, level.ahu);
+  // ── Coverage: requires supply AND return diffuser, each connected to AHU ──
+  const servedRooms  = computeServedRooms(player, level.ahu);
+  const supplyServed = computeSupplyServedRooms(player, level.ahu);
+
   const unservedRooms: string[] = [];
+  const missingReturnRooms: string[] = [];
   for (const room of level.rooms) {
-    if (!servedRooms.has(room.id)) unservedRooms.push(room.id);
+    if (!servedRooms.has(room.id)) {
+      unservedRooms.push(room.id);
+      if (supplyServed.has(room.id)) missingReturnRooms.push(room.id);
+    }
   }
   const servedFraction = (level.rooms.length - unservedRooms.length) / Math.max(1, level.rooms.length);
   const coverage = Math.round(40 * servedFraction);
@@ -38,7 +45,6 @@ export function scoreSystem(level: Level, player: DuctSystem): ScoreBreakdown {
   let excessLengthPct = 0;
   if (playerLength > 0) {
     excessLengthPct = Math.max(0, (playerLength - optimalLength) / Math.max(1, optimalLength)) * 100;
-    // Full marks if ≤5% over optimal, zero if ≥100% over
     const efficiencyRaw = Math.max(0, 1 - excessLengthPct / 100);
     efficiency = Math.round(40 * efficiencyRaw);
   }
@@ -58,12 +64,17 @@ export function scoreSystem(level: Level, player: DuctSystem): ScoreBreakdown {
     efficiency,
     sizing,
     unservedRooms,
+    missingReturnRooms,
     excessLengthPct: Math.round(excessLengthPct),
   };
 }
 
 /** Summary string for results screen */
 export function scoreSummary(score: ScoreBreakdown): string {
+  if (score.missingReturnRooms.length > 0) {
+    return `${score.missingReturnRooms.length} room(s) have supply but no return duct connected to the AHU.`;
+  }
+  if (score.unservedRooms.length > 0) return 'Some rooms are not served — check supply duct and diffuser connections.';
   if (score.total >= 90) return 'Excellent! Near-optimal design.';
   if (score.total >= 70) return 'Good design — some room for efficiency gains.';
   if (score.total >= 50) return 'Acceptable — review duct routing and sizing.';

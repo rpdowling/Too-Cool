@@ -94,4 +94,5 @@ function buildLevel(): Level {
 export const level1: Level = buildLevel();
 
 import { level2 } from './level2';
-export const ALL_LEVELS: Level[] = [level1, level2];
+import { level3 } from './level3';
+export const ALL_LEVELS: Level[] = [level1, level2, level3];

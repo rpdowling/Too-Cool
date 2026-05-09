@@ -269,6 +269,32 @@ canvas.duct-canvas { display: block; }
 
 .scrollable { overflow: auto; }
 
+/* ── Return-missing badge ────────────────────────────────────────────────── */
+.room-return-warn {
+  font-size: 0.62rem; color: #fbbf24; margin-left: 4px;
+  background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.3);
+  padding: 0 4px; border-radius: 3px; white-space: nowrap;
+}
+
+/* ── Load-calc info panel ────────────────────────────────────────────────── */
+.load-calc-info { margin-top: 4px; }
+.load-calc-panel {
+  margin-top: 6px; padding: 8px; border-radius: 6px;
+  background: rgba(15,30,50,0.7); border: 1px solid var(--border);
+  font-size: 0.68rem; display: flex; flex-direction: column; gap: 2px;
+}
+.lc-title { font-weight: 700; font-size: 0.7rem; color: var(--accent-h); margin-bottom: 4px; }
+.lc-section {
+  margin-top: 5px; margin-bottom: 2px;
+  font-size: 0.63rem; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-dim); border-bottom: 1px solid var(--border); padding-bottom: 2px;
+}
+.lc-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  color: var(--text-dim);
+}
+.lc-row strong { color: var(--text); font-weight: 600; text-align: right; max-width: 55%; }
+
 /* ── Scrollbar ────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

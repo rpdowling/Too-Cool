@@ -19,6 +19,17 @@ import { uid } from './utils';
 function hEdgeKey(cx: number, cy: number) { return `h:${cx},${cy}`; }
 function vEdgeKey(cx: number, cy: number) { return `v:${cx},${cy}`; }
 
+/** Can a flood-fill step cross from (fromX,fromY) to (toX,toY) given blocked edges? */
+function edgePassable(fromX: number, fromY: number, toX: number, toY: number, blocked: Set<string>): boolean {
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  if (dx === 1  && dy === 0) return !blocked.has(vEdgeKey(toX, fromY));
+  if (dx === -1 && dy === 0) return !blocked.has(vEdgeKey(fromX, fromY));
+  if (dx === 0  && dy === 1) return !blocked.has(hEdgeKey(fromX, toY));
+  if (dx === 0  && dy === -1) return !blocked.has(hEdgeKey(fromX, fromY));
+  return false;
+}
+
 /** Build a set of blocked edges from wall segments.
  *  Doors and windows are also treated as opaque barriers for flood-fill —
  *  a room is "enclosed" even with openings; access is validated separately. */
@@ -73,26 +84,13 @@ function addEdgesForSegment(a: GridPoint, b: GridPoint, out: Set<string>) {
 
 /** Returns a 2D map (cell key → boolean) of cells reachable from outside */
 function floodFillOutside(
-  walls: WallSegment[],
-  doors: FloorPlan['doors'],
-  windows: FloorPlan['windows'],
+  blocked: Set<string>,
   maxX: number,
   maxY: number,
 ): Set<string> {
-  const blocked = buildEdgeSet(walls, doors, windows);
   const visited = new Set<string>();
 
   function key(x: number, y: number) { return `${x},${y}`; }
-
-  function canMove(fromX: number, fromY: number, toX: number, toY: number): boolean {
-    const dx = toX - fromX;
-    const dy = toY - fromY;
-    if (dx === 1 && dy === 0) return !blocked.has(vEdgeKey(toX, fromY));
-    if (dx === -1 && dy === 0) return !blocked.has(vEdgeKey(fromX, fromY));
-    if (dx === 0 && dy === 1) return !blocked.has(hEdgeKey(fromX, toY));
-    if (dx === 0 && dy === -1) return !blocked.has(hEdgeKey(fromX, fromY));
-    return false;
-  }
 
   const queue: Array<[number, number]> = [[-1, -1]];
   visited.add(key(-1, -1));
@@ -102,7 +100,7 @@ function floodFillOutside(
     for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) {
       if (nx < -1 || ny < -1 || nx > maxX + 1 || ny > maxY + 1) continue;
       if (visited.has(key(nx, ny))) continue;
-      if (!canMove(cx, cy, nx, ny)) continue;
+      if (!edgePassable(cx, cy, nx, ny, blocked)) continue;
       visited.add(key(nx, ny));
       queue.push([nx, ny]);
     }
@@ -122,7 +120,9 @@ export function detectRooms(fp: FloorPlan): Room[] {
   const maxX = fp.gridWidth;
   const maxY = fp.gridHeight;
 
-  const outside = floodFillOutside(fp.walls, fp.doors, fp.windows, maxX, maxY);
+  // Build once; shared by outside flood-fill and component detection.
+  const blocked = buildEdgeSet(fp.walls, fp.doors, fp.windows);
+  const outside = floodFillOutside(blocked, maxX, maxY);
 
   // Find all interior cells
   const interior = new Set<string>();
@@ -132,7 +132,8 @@ export function detectRooms(fp: FloorPlan): Room[] {
     }
   }
 
-  // Connected components of interior cells = rooms
+  // Connected components — respect the same wall/door/window edges so that
+  // rooms separated by interior walls are never merged.
   const visited = new Set<string>();
   const rooms: Room[] = [];
 
@@ -149,6 +150,7 @@ export function detectRooms(fp: FloorPlan): Room[] {
       for (const [nx, ny] of [[qx + 1, qy], [qx - 1, qy], [qx, qy + 1], [qx, qy - 1]]) {
         const nk = `${nx},${ny}`;
         if (!interior.has(nk) || visited.has(nk)) continue;
+        if (!edgePassable(qx, qy, nx, ny, blocked)) continue;
         visited.add(nk);
         queue.push([nx, ny]);
       }
