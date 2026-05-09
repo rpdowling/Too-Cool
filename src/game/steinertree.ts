@@ -3,24 +3,28 @@
  *
  * Uses a two-phase approach:
  *   1. Prim's MST on terminal nodes (AHU supply port + room centroids)
- *      to get an initial spanning tree.
- *   2. Grid-based Manhattan routing for each MST edge, with optional
- *      45° diagonals.  The routed tree gives the reference duct system
- *      used for scoring.
+ *      using Manhattan distance, which matches the actual L-shaped routing cost.
+ *   2. Grid-based L-shaped Manhattan routing for each MST edge.
  *
- * Output is a DuctSystem whose CFMs are assigned by propagating from
- * leaves back toward the root (AHU).
+ * Short-circuit rule: return grilles are placed at least 2 grid units from
+ * the supply diffuser so supply air isn't immediately sucked back by the return.
  */
 import type { GridPoint, DuctSystem, DuctSegment, Diffuser, Room, AHU } from '../types';
-import { uid, dist, segLen } from './utils';
+import { uid, segLen } from './utils';
 import { autoSizeDuct } from './ductSizing';
+
+// ─── Manhattan distance ───────────────────────────────────────────────────────
+
+function manhattanDist(a: GridPoint, b: GridPoint): number {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
 
 // ─── MST via Prim's algorithm ─────────────────────────────────────────────────
 
 interface Terminal {
   id: string;
   point: GridPoint;
-  cfm: number;  // 0 for junction/AHU nodes
+  cfm: number;
 }
 
 function primMST(terminals: Terminal[]): Array<[Terminal, Terminal]> {
@@ -35,7 +39,7 @@ function primMST(terminals: Terminal[]): Array<[Terminal, Terminal]> {
       if (!inTree.has(t.id)) continue;
       for (const u of terminals) {
         if (inTree.has(u.id)) continue;
-        const d = dist(t.point, u.point);
+        const d = manhattanDist(t.point, u.point);
         if (d < bestDist) { bestDist = d; best = [t, u]; }
       }
     }
@@ -44,6 +48,27 @@ function primMST(terminals: Terminal[]): Array<[Terminal, Terminal]> {
     edges.push(best);
   }
   return edges;
+}
+
+// ─── Short-circuit rule ───────────────────────────────────────────────────────
+
+const SHORT_CIRCUIT_MIN = 2;
+
+/** Return a position for the return grille that is ≥ SHORT_CIRCUIT_MIN grid
+ *  units from the supply diffuser and inside the room's cell footprint. */
+function safeReturnPos(supply: GridPoint, cells: GridPoint[]): GridPoint {
+  const cellSet = new Set(cells.map(c => `${c.x},${c.y}`));
+  const offsets: [number, number][] = [
+    [SHORT_CIRCUIT_MIN, 0], [-SHORT_CIRCUIT_MIN, 0],
+    [0, SHORT_CIRCUIT_MIN], [0, -SHORT_CIRCUIT_MIN],
+    [SHORT_CIRCUIT_MIN + 1, 0], [-(SHORT_CIRCUIT_MIN + 1), 0],
+    [0, SHORT_CIRCUIT_MIN + 1], [0, -(SHORT_CIRCUIT_MIN + 1)],
+  ];
+  for (const [dx, dy] of offsets) {
+    const cand: GridPoint = { x: supply.x + dx, y: supply.y + dy };
+    if (cellSet.has(`${Math.floor(cand.x)},${Math.floor(cand.y)}`)) return cand;
+  }
+  return { x: supply.x + 1, y: supply.y };
 }
 
 // ─── L-shaped Manhattan routing ──────────────────────────────────────────────
@@ -56,21 +81,15 @@ function routeSegments(
 ): DuctSegment[] {
   const size = autoSizeDuct(cfm);
   const segs: DuctSegment[] = [];
-
   const dx = to.x - from.x;
   const dy = to.y - from.y;
 
   if (dx === 0 && dy === 0) return [];
 
-  // Try horizontal-first L-route
   if (dx !== 0 && dy !== 0) {
     const corner: GridPoint = { x: to.x, y: from.y };
-    if (Math.abs(dx) > 0) {
-      segs.push({ id: uid(), start: from, end: corner, size, cfm, layer: 0, isReturn });
-    }
-    if (Math.abs(dy) > 0) {
-      segs.push({ id: uid(), start: corner, end: to, size, cfm, layer: 0, isReturn });
-    }
+    segs.push({ id: uid(), start: from, end: corner, size, cfm, layer: 0, isReturn });
+    segs.push({ id: uid(), start: corner, end: to,   size, cfm, layer: 0, isReturn });
   } else {
     segs.push({ id: uid(), start: from, end: to, size, cfm, layer: 0, isReturn });
   }
@@ -82,11 +101,11 @@ function routeSegments(
 
 export function buildOptimalDuctSystem(rooms: Room[], ahu: AHU): DuctSystem {
   const centroid = (cells: GridPoint[]): GridPoint => {
-    const s = cells.reduce((a, c) => ({ x: a.x + c.x + 0.5, y: a.y + c.y + 0.5 }), { x: 0, y: 0 });
-    return { x: Math.round(s.x / cells.length * 2) / 2, y: Math.round(s.y / cells.length * 2) / 2 };
+    const cx = cells.reduce((s, c) => s + c.x + 0.5, 0) / cells.length;
+    const cy = cells.reduce((s, c) => s + c.y + 0.5, 0) / cells.length;
+    return { x: Math.round(cx), y: Math.round(cy) };
   };
 
-  // Terminals: AHU supply port + room centroids
   const terminals: Terminal[] = [
     { id: 'ahu', point: ahu.supplyPort, cfm: 0 },
     ...rooms.map(r => ({ id: r.id, point: centroid(r.cells), cfm: r.cfm })),
@@ -94,43 +113,35 @@ export function buildOptimalDuctSystem(rooms: Room[], ahu: AHU): DuctSystem {
 
   const mstEdges = primMST(terminals);
 
-  // Build adjacency for CFM propagation
-  // (parent is whichever node is closer to AHU in MST)
   type Edge = { from: string; to: string; fromPt: GridPoint; toPt: GridPoint };
   const edgeList: Edge[] = mstEdges.map(([a, b]) => ({
-    from: a.id,
-    to: b.id,
-    fromPt: a.point,
-    toPt: b.point,
+    from: a.id, to: b.id, fromPt: a.point, toPt: b.point,
   }));
 
-  // Build adjacency list
   const adj = new Map<string, string[]>();
   for (const e of edgeList) {
     if (!adj.has(e.from)) adj.set(e.from, []);
-    if (!adj.has(e.to)) adj.set(e.to, []);
+    if (!adj.has(e.to))   adj.set(e.to,   []);
     adj.get(e.from)!.push(e.to);
     adj.get(e.to)!.push(e.from);
   }
 
-  // BFS from AHU to determine parent-child relationships
   const parent = new Map<string, string>();
   const order: string[] = [];
-  const visited = new Set<string>(['ahu']);
-  const queue: string[] = ['ahu'];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
+  const bfsVisited = new Set<string>(['ahu']);
+  const bfsQueue: string[] = ['ahu'];
+  while (bfsQueue.length > 0) {
+    const cur = bfsQueue.shift()!;
     order.push(cur);
-    for (const nb of (adj.get(cur) ?? [])) {
-      if (!visited.has(nb)) {
-        visited.add(nb);
+    for (const nb of adj.get(cur) ?? []) {
+      if (!bfsVisited.has(nb)) {
+        bfsVisited.add(nb);
         parent.set(nb, cur);
-        queue.push(nb);
+        bfsQueue.push(nb);
       }
     }
   }
 
-  // Compute subtree CFM (sum of leaf loads)
   const termMap = new Map(terminals.map(t => [t.id, t]));
   const subtreeCFM = new Map<string, number>();
   for (const id of [...order].reverse()) {
@@ -151,34 +162,28 @@ export function buildOptimalDuctSystem(rooms: Room[], ahu: AHU): DuctSystem {
     const thisPt = termMap.get(id)!.point;
     const cfm = subtreeCFM.get(id) ?? 0;
 
-    const segs = routeSegments(parPt, thisPt, cfm);
-    allSegments.push(...segs);
+    allSegments.push(...routeSegments(parPt, thisPt, cfm));
 
-    // Place supply diffuser at room centroid
-    if (id !== 'ahu') {
-      const room = rooms.find(r => r.id === id);
-      if (room) {
-        const roomCFM = room.cfm;
-        diffusers.push({
-          id: uid(),
-          position: thisPt,
-          roomId: id,
-          size: autoSizeDuct(roomCFM),
-          cfm: roomCFM,
-          isReturn: false,
-        });
-      }
+    const room = rooms.find(r => r.id === id);
+    if (room) {
+      diffusers.push({
+        id: uid(),
+        position: thisPt,
+        roomId: id,
+        size: autoSizeDuct(room.cfm),
+        cfm: room.cfm,
+        isReturn: false,
+      });
     }
   }
 
-  // Build return system (mirror: return grilles at same centroids, return duct to AHU return port)
+  // Return system: return grille placed ≥ SHORT_CIRCUIT_MIN from supply
   const returnDiffusers: Diffuser[] = [];
   const returnSegments: DuctSegment[] = [];
 
   for (const room of rooms) {
     const ctr = centroid(room.cells);
-    // Offset one grid unit right of supply — must stay on integer grid
-    const retPt: GridPoint = { x: Math.round(ctr.x) + 1, y: Math.round(ctr.y) };
+    const retPt = safeReturnPos(ctr, room.cells);
     returnDiffusers.push({
       id: uid(),
       position: retPt,
@@ -187,8 +192,7 @@ export function buildOptimalDuctSystem(rooms: Room[], ahu: AHU): DuctSystem {
       cfm: room.cfm,
       isReturn: true,
     });
-    const retSegs = routeSegments(retPt, ahu.returnPort, room.cfm, true);
-    returnSegments.push(...retSegs);
+    returnSegments.push(...routeSegments(retPt, ahu.returnPort, room.cfm, true));
   }
 
   return {

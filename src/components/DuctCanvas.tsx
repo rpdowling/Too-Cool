@@ -27,6 +27,7 @@ import {
   uid, dist, segLen,
 } from '../game/utils';
 import { autoSizeDuct, DUCT_MAX_CFM, ductLineGap, sizeDiffusersForRoom } from '../game/ductSizing';
+import { computeServedRooms } from '../game/connectivity';
 
 interface Props {
   width: number;
@@ -70,6 +71,9 @@ export function DuctCanvas({
     ctx.clearRect(0, 0, width, height);
 
     const s = stateRef.current;
+
+    // Green overlay on rooms that have a supply diffuser connected to the AHU
+    drawServedRoomOverlay(ctx, level, ductSystem);
 
     if (showOptimal) {
       drawDuctSystem(ctx, level.optimalDuctSystem, OPTIMAL_COLOR, OPTIMAL_COLOR, true);
@@ -163,13 +167,7 @@ export function DuctCanvas({
     if (seg1) newSegs.push({ id: uid(), ...seg1, size: selectedSize, cfm, layer: currentLayer, isReturn });
     if (seg2) newSegs.push({ id: uid(), ...seg2, size: selectedSize, cfm, layer: currentLayer, isReturn });
 
-    let newSystem: DuctSystem = { ...ductSystem, segments: [...ductSystem.segments, ...newSegs] };
-
-    // Auto-place diffuser if final endpoint is inside a room
-    const room = roomAtPoint(endPt, level.rooms);
-    if (room) {
-      newSystem = autoPlaceDiffuser(newSystem, endPt, room, isReturn);
-    }
+    const newSystem: DuctSystem = { ...ductSystem, segments: [...ductSystem.segments, ...newSegs] };
 
     s.drawStart = null;
     onDuctSystemChange(newSystem);
@@ -221,6 +219,9 @@ export function DuctCanvas({
   function placeDiffuser(gp: GridPoint, isReturn: boolean) {
     const room = roomAtPoint(gp, level.rooms);
     if (!room) return;
+    // Short-circuit rule: supply and return can't be within 2 grid units of each other
+    const opposite = ductSystem.diffusers.filter(d => d.roomId === room.id && d.isReturn !== isReturn);
+    if (opposite.some(d => dist(d.position, gp) < 2.0)) return;
     onDuctSystemChange(autoPlaceDiffuser(ductSystem, gp, room, isReturn));
   }
 
@@ -467,6 +468,27 @@ function drawSizePopup(ctx: CanvasRenderingContext2D, diff: Diffuser) {
     ctx.fillStyle = s === diff.size ? 'white' : '#334155';
     ctx.fillText(`${s}"`, bx + bw / 2, oy + bh / 2);
   });
+  ctx.restore();
+}
+
+// ─── Served-room overlay ──────────────────────────────────────────────────────
+
+function drawServedRoomOverlay(
+  ctx: CanvasRenderingContext2D,
+  level: Level,
+  ds: DuctSystem,
+) {
+  const served = computeServedRooms(ds, level.ahu);
+  if (served.size === 0) return;
+  ctx.save();
+  ctx.fillStyle = 'rgba(52, 211, 153, 0.32)';
+  for (const room of level.rooms) {
+    if (!served.has(room.id)) continue;
+    for (const cell of room.cells) {
+      const { x, y } = gridToPixel(cell);
+      ctx.fillRect(x, y, GRID_PX, GRID_PX);
+    }
+  }
   ctx.restore();
 }
 

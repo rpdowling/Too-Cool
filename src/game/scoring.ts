@@ -2,14 +2,14 @@
  * Score the player's duct system against the pre-solved optimal.
  *
  * Scoring rubric (100 pts total):
- *   40 pts – room coverage (all rooms served by a connected diffuser)
+ *   40 pts – room coverage (supply diffuser reachable from AHU via duct path)
  *   40 pts – duct efficiency (closeness to optimal total length)
  *   20 pts – proper duct sizing (no significantly oversized/undersized runs)
  */
-import type { DuctSystem, Room, Level } from '../types';
+import type { DuctSystem, Level } from '../types';
 import { totalDuctLength } from './steinertree';
 import { DUCT_MAX_CFM } from './ductSizing';
-import { segLen } from './utils';
+import { computeServedRooms } from './connectivity';
 
 export interface ScoreBreakdown {
   total: number;          // 0–100
@@ -20,17 +20,13 @@ export interface ScoreBreakdown {
   excessLengthPct: number;
 }
 
-/** Check if a room has at least one supply diffuser connected to the AHU */
-function roomIsServed(roomId: string, player: DuctSystem): boolean {
-  return player.diffusers.some(d => d.roomId === roomId && !d.isReturn);
-}
-
 /** Score player's duct system */
 export function scoreSystem(level: Level, player: DuctSystem): ScoreBreakdown {
-  // ── Coverage ──
+  // ── Coverage: requires diffuser connected to AHU via supply duct ──
+  const servedRooms = computeServedRooms(player, level.ahu);
   const unservedRooms: string[] = [];
   for (const room of level.rooms) {
-    if (!roomIsServed(room.id, player)) unservedRooms.push(room.id);
+    if (!servedRooms.has(room.id)) unservedRooms.push(room.id);
   }
   const servedFraction = (level.rooms.length - unservedRooms.length) / Math.max(1, level.rooms.length);
   const coverage = Math.round(40 * servedFraction);

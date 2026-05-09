@@ -24,6 +24,13 @@ function makeLevel(roomCFM = 150, optimalLength = 10): Level {
 
 const EMPTY_SYSTEM: DuctSystem = { segments: [], transitions: [], diffusers: [] };
 
+// Supply duct from AHU port (3,7) to room point (3,3) + diffuser at endpoint
+const CONNECTED_SYSTEM: DuctSystem = {
+  ...EMPTY_SYSTEM,
+  segments: [{ id: 's1', start: { x: 3, y: 7 }, end: { x: 3, y: 3 }, size: 6, cfm: 150, layer: 0, isReturn: false }],
+  diffusers: [{ id: 'd1', position: { x: 3, y: 3 }, roomId: 'r1', size: 6, cfm: 150, isReturn: false }],
+};
+
 describe('scoreSystem', () => {
   it('scores 0 coverage when no diffusers placed', () => {
     const s = scoreSystem(makeLevel(), EMPTY_SYSTEM);
@@ -31,12 +38,18 @@ describe('scoreSystem', () => {
     expect(s.unservedRooms).toContain('r1');
   });
 
-  it('scores full coverage when room has a supply diffuser', () => {
+  it('scores 0 coverage when diffuser exists but is not connected to AHU', () => {
     const ds: DuctSystem = {
       ...EMPTY_SYSTEM,
       diffusers: [{ id: 'd1', position: { x: 3, y: 3 }, roomId: 'r1', size: 6, cfm: 150, isReturn: false }],
     };
     const s = scoreSystem(makeLevel(), ds);
+    expect(s.coverage).toBe(0);
+    expect(s.unservedRooms).toContain('r1');
+  });
+
+  it('scores full coverage when room has a supply diffuser connected to AHU', () => {
+    const s = scoreSystem(makeLevel(), CONNECTED_SYSTEM);
     expect(s.coverage).toBe(40);
   });
 
@@ -46,7 +59,7 @@ describe('scoreSystem', () => {
   });
 
   it('total = coverage + efficiency + sizing', () => {
-    const s = scoreSystem(makeLevel(), EMPTY_SYSTEM);
+    const s = scoreSystem(makeLevel(), CONNECTED_SYSTEM);
     expect(s.total).toBe(s.coverage + s.efficiency + s.sizing);
   });
 });
