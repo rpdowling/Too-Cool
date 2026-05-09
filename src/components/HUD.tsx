@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import type { Level, Room, DuctSystem, DrawingTool, DuctSize } from '../types';
+import type { Level, Room, DuctSystem, DrawingTool } from '../types';
 import type { ScoreBreakdown } from '../game/scoring';
-import { DUCT_MAX_CFM } from '../game/ductSizing';
 import { scoreSummary } from '../game/scoring';
 
 export type { ScoreBreakdown };
@@ -10,12 +9,10 @@ interface Props {
   level: Level;
   ductSystem: DuctSystem;
   activeTool: DrawingTool;
-  selectedSize: DuctSize;
   currentLayer: number;
   showOptimal: boolean;
   score: ScoreBreakdown | null;
   onToolChange: (t: DrawingTool) => void;
-  onSizeChange: (s: DuctSize) => void;
   onSubmit: () => void;
   onUndo: () => void;
   onClear: () => void;
@@ -28,12 +25,8 @@ const SUPPLY_TOOLS: { tool: DrawingTool; label: string }[] = [
   { tool: 'diffuser_supply', label: 'Supply Diff.' },
   { tool: 'duct_return', label: 'Return Duct' },
   { tool: 'diffuser_return', label: 'Return Grille' },
-  { tool: 'transition_rise', label: 'Rise ↑' },
-  { tool: 'transition_drop', label: 'Drop ↓' },
   { tool: 'eraser', label: 'Eraser' },
 ];
-
-const SIZES: DuctSize[] = [4, 6, 8, 12];
 
 function roomSuppliedCFM(roomId: string, ds: DuctSystem): number {
   return ds.diffusers.filter(d => d.roomId === roomId && !d.isReturn)
@@ -82,8 +75,8 @@ function LoadCalcInfo() {
 }
 
 export function HUD({
-  level, ductSystem, activeTool, selectedSize, currentLayer, showOptimal, score,
-  onToolChange, onSizeChange, onSubmit, onUndo, onClear, onToggleOptimal, onBack,
+  level, ductSystem, activeTool, currentLayer, showOptimal, score,
+  onToolChange, onSubmit, onUndo, onClear, onToggleOptimal, onBack,
 }: Props) {
   return (
     <div className="hud">
@@ -120,10 +113,6 @@ export function HUD({
               ))}
             </div>
           </>
-        )}
-
-        {currentLayer > 0 && (
-          <div className="layer-badge">Layer {currentLayer + 1} ↑</div>
         )}
 
         <div className="hud-actions">

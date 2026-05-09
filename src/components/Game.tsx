@@ -1,11 +1,12 @@
 import React, { useState, useCallback } from 'react';
-import type { Level, DuctSystem, DrawingTool, DuctSize, GameMode } from '../types';
+import type { Level, DuctSystem, DrawingTool, GameMode } from '../types';
 import type { ScoreBreakdown } from './HUD';
 import { FloorplanCanvas } from './FloorplanCanvas';
 import { DuctCanvas } from './DuctCanvas';
 import { HUD } from './HUD';
 import { scoreSystem } from '../game/scoring';
 import { GRID_PX, CANVAS_PAD } from '../game/utils';
+import { recalculateDuctSizes } from '../game/ductSizing';
 
 interface Props {
   level: Level;
@@ -21,7 +22,6 @@ const EMPTY_SYSTEM: DuctSystem = { segments: [], transitions: [], diffusers: [] 
 export function Game({ level, settings, onNavigate, highScores, onScore }: Props) {
   const [ductSystem, setDuctSystem] = useState<DuctSystem>(EMPTY_SYSTEM);
   const [activeTool, setActiveTool] = useState<DrawingTool>('duct_supply');
-  const [selectedSize, setSelectedSize] = useState<DuctSize>(6);
   const [currentLayer, setCurrentLayer] = useState(0);
   const [showOptimal, setShowOptimal] = useState(false);
   const [score, setScore] = useState<ScoreBreakdown | null>(null);
@@ -32,10 +32,11 @@ export function Game({ level, settings, onNavigate, highScores, onScore }: Props
   const canvasH = CANVAS_PAD * 2 + (level.floorplan.gridHeight + EXTRA_BELOW) * GRID_PX;
 
   const handleDuctSystemChange = useCallback((ds: DuctSystem) => {
-    setHistory(h => [...h.slice(-30), ds]);
-    setDuctSystem(ds);
+    const sized = recalculateDuctSizes(ds, level.ahu.supplyPort, level.ahu.returnPort);
+    setHistory(h => [...h.slice(-30), sized]);
+    setDuctSystem(sized);
     setScore(null);
-  }, []);
+  }, [level.ahu]);
 
   function handleUndo() {
     if (history.length <= 1) return;
@@ -63,12 +64,10 @@ export function Game({ level, settings, onNavigate, highScores, onScore }: Props
         level={level}
         ductSystem={ductSystem}
         activeTool={activeTool}
-        selectedSize={selectedSize}
         currentLayer={currentLayer}
         showOptimal={showOptimal}
         score={score}
         onToolChange={setActiveTool}
-        onSizeChange={setSelectedSize}
         onSubmit={handleSubmit}
         onUndo={handleUndo}
         onClear={handleClear}
@@ -91,7 +90,6 @@ export function Game({ level, settings, onNavigate, highScores, onScore }: Props
             level={level}
             ductSystem={ductSystem}
             activeTool={activeTool}
-            selectedSize={selectedSize}
             currentLayer={currentLayer}
             showOptimal={showOptimal}
             onDuctSystemChange={handleDuctSystemChange}

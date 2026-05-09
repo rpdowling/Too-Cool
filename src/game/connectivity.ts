@@ -2,15 +2,38 @@ import type { DuctSystem, DuctSegment, Diffuser, AHU, GridPoint, Room } from '..
 
 function ptKey(p: GridPoint): string { return `${p.x},${p.y}`; }
 
+/** All integer grid points along an orthogonal segment, inclusive of both ends.
+ *  For diagonal segments (shouldn't occur in normal play) returns just endpoints. */
+function pointsAlongSegment(a: GridPoint, b: GridPoint): GridPoint[] {
+  const ddx = b.x - a.x;
+  const ddy = b.y - a.y;
+  if (ddx !== 0 && ddy !== 0) return [a, b]; // diagonal — use endpoints only
+  const pts: GridPoint[] = [a];
+  const dx = Math.sign(ddx);
+  const dy = Math.sign(ddy);
+  let { x, y } = a;
+  while (x !== b.x || y !== b.y) {
+    x += dx;
+    y += dy;
+    pts.push({ x, y });
+  }
+  return pts;
+}
+
 function bfsReachable(segments: DuctSegment[], startPort: GridPoint): Set<string> {
   const adj = new Map<string, GridPoint[]>();
-  for (const seg of segments) {
-    const ak = ptKey(seg.start);
-    const bk = ptKey(seg.end);
+
+  function link(a: GridPoint, b: GridPoint) {
+    const ak = ptKey(a), bk = ptKey(b);
     if (!adj.has(ak)) adj.set(ak, []);
     if (!adj.has(bk)) adj.set(bk, []);
-    adj.get(ak)!.push(seg.end);
-    adj.get(bk)!.push(seg.start);
+    adj.get(ak)!.push(b);
+    adj.get(bk)!.push(a);
+  }
+
+  for (const seg of segments) {
+    const pts = pointsAlongSegment(seg.start, seg.end);
+    for (let i = 0; i < pts.length - 1; i++) link(pts[i], pts[i + 1]);
   }
 
   const visited = new Set<string>();

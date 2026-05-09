@@ -6,16 +6,19 @@
  *     orthogonal segments.  Straight runs stay as one segment.
  *   – Elbows (square fittings) are rendered wherever two segments share an
  *     endpoint.
- *   – Duct size snaps to the selected size; player can resize via double-click
- *     popup.
+ *   – Duct size is AUTO-SIZED from connected diffuser CFM; no manual selection.
  *   – Supply = blue, return = red, optimal overlay = green ghost.
  *
  * Interaction:
- *   mousedown  → start draw (duct tool) or place diffuser
- *   mousemove  → preview L-route
- *   mouseup    → commit segment(s); auto-place diffuser when endpoint is inside a room
- *   dblclick   → open size-resize popup on a diffuser
- *   contextmenu→ cancel in-progress draw
+ *   mousedown   → start draw (duct tool) or place diffuser
+ *   mousemove   → preview L-route
+ *   mouseup     → commit segment(s) if valid
+ *   contextmenu → cancel in-progress draw
+ *
+ * Validation rules:
+ *   – Duct may NOT pass through the interior of an existing diffuser.
+ *   – Duct may NOT cross interior (non-exterior) walls.
+ *   – Duct MAY cross exterior walls (always perpendicular by geometry).
  */
 import React, { useRef, useEffect, useCallback } from 'react';
 import type {
@@ -26,7 +29,7 @@ import {
   GRID_PX, CANVAS_PAD, gridToPixel, pixelToGrid, snapToGridPoint,
   uid, dist, segLen, isOnWallOrDoor,
 } from '../game/utils';
-import { autoSizeDuct, DUCT_MAX_CFM, ductLineGap, sizeDiffusersForRoom } from '../game/ductSizing';
+import { autoSizeDuct, ductLineGap, sizeDiffusersForRoom } from '../game/ductSizing';
 import { computeServedRooms, computeSupplyServedRooms } from '../game/connectivity';
 
 interface Props {
@@ -35,7 +38,6 @@ interface Props {
   level: Level;
   ductSystem: DuctSystem;
   activeTool: DrawingTool;
-  selectedSize: DuctSize;
   currentLayer: number;
   showOptimal: boolean;
   onDuctSystemChange: (ds: DuctSystem) => void;
@@ -51,15 +53,15 @@ const LABEL_BG      = 'rgba(255,255,255,0.88)';
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function DuctCanvas({
-  width, height, level, ductSystem, activeTool, selectedSize,
+  width, height, level, ductSystem, activeTool,
   currentLayer, showOptimal, onDuctSystemChange, onLayerChange,
 }: Props) {
   const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const errorFlash  = useRef<number>(0);
   const stateRef    = useRef({
-    isDrawing:    false,
-    drawStart:    null as GridPoint | null,
-    previewEnd:   null as GridPoint | null,
-    popupDiffId:  null as string | null,
+    isDrawing:  false,
+    drawStart:  null as GridPoint | null,
+    previewEnd: null as GridPoint | null,
   });
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -81,21 +83,23 @@ export function DuctCanvas({
 
     drawDuctSystem(ctx, ductSystem, SUPPLY_COLOR, RETURN_COLOR, false);
 
-    // Preview L-route
+    // Preview L-route with auto-sized preview
     if (s.isDrawing && s.drawStart && s.previewEnd) {
       const { seg1, seg2, corner } = lRoute(s.drawStart, s.previewEnd);
       const isReturn = activeTool === 'duct_return';
-      if (seg1) drawSegPreview(ctx, seg1.start, seg1.end, selectedSize, isReturn);
-      if (seg2) drawSegPreview(ctx, seg2.start, seg2.end, selectedSize, isReturn);
-      if (corner) drawElbow(ctx, corner, selectedSize, isReturn ? PREVIEW_COLOR : PREVIEW_COLOR, 0.7);
+      const previewCfm = estimateCFM(ductSystem, isReturn);
+      const previewSize = autoSizeDuct(Math.max(1, previewCfm));
+      if (seg1) drawSegPreview(ctx, seg1.start, seg1.end, previewSize, isReturn);
+      if (seg2) drawSegPreview(ctx, seg2.start, seg2.end, previewSize, isReturn);
+      if (corner) drawElbow(ctx, corner, previewSize, PREVIEW_COLOR, 0.7);
     }
 
-    // Resize popup
-    if (s.popupDiffId) {
-      const d = ductSystem.diffusers.find(x => x.id === s.popupDiffId);
-      if (d) drawSizePopup(ctx, d);
+    // Error flash
+    if (Date.now() - errorFlash.current < 500) {
+      ctx.fillStyle = 'rgba(239,68,68,0.22)';
+      ctx.fillRect(0, 0, width, height);
     }
-  }, [width, height, level, ductSystem, activeTool, selectedSize, currentLayer, showOptimal]);
+  }, [width, height, level, ductSystem, activeTool, currentLayer, showOptimal]);
 
   useEffect(() => { render(); }, [render]);
 
@@ -110,13 +114,6 @@ export function DuctCanvas({
 
   function handleMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
     if (e.button !== 0) return;
-
-    // Close popup on any click
-    if (stateRef.current.popupDiffId) {
-      stateRef.current.popupDiffId = null;
-      render();
-      return;
-    }
 
     const gp = gpFromEvent(e);
 
@@ -161,49 +158,19 @@ export function DuctCanvas({
 
     const isReturn = activeTool === 'duct_return';
     const cfm = estimateCFM(ductSystem, isReturn);
+    const size = autoSizeDuct(Math.max(1, cfm));
 
     const { seg1, seg2 } = lRoute(s.drawStart, endPt);
     const newSegs: DuctSegment[] = [];
-    if (seg1) newSegs.push({ id: uid(), ...seg1, size: selectedSize, cfm, layer: currentLayer, isReturn });
-    if (seg2) newSegs.push({ id: uid(), ...seg2, size: selectedSize, cfm, layer: currentLayer, isReturn });
+    if (seg1) newSegs.push({ id: uid(), ...seg1, size: selectedSize, cfm, layer: 0, isReturn });
+    if (seg2) newSegs.push({ id: uid(), ...seg2, size: selectedSize, cfm, layer: 0, isReturn });
 
-    const newSystem: DuctSystem = { ...ductSystem, segments: [...ductSystem.segments, ...newSegs] };
-
+    const conflicts = newSegs.some(ns => ductSystem.segments.some(es => segmentsConflict(ns, es)));
     s.drawStart = null;
-    onDuctSystemChange(newSystem);
+    if (conflicts) { render(); return; }
+
+    onDuctSystemChange({ ...ductSystem, segments: [...ductSystem.segments, ...newSegs] });
     render();
-  }
-
-  function handleDoubleClick(e: React.MouseEvent<HTMLCanvasElement>) {
-    const gp = gpFromEvent(e);
-    const EPS = 0.6;
-    const diff = ductSystem.diffusers.find(d => dist(d.position, gp) < EPS);
-    if (diff) { stateRef.current.popupDiffId = diff.id; render(); }
-  }
-
-  function handlePopupClick(e: React.MouseEvent<HTMLCanvasElement>) {
-    const pid = stateRef.current.popupDiffId;
-    if (!pid) return;
-    const diff = ductSystem.diffusers.find(d => d.id === pid);
-    if (!diff) return;
-
-    const p = gridToPixel(diff.position);
-    const sizes: DuctSize[] = [4, 6, 8, 12];
-    const bw = 46, bh = 22, gap = 4;
-    const totalW = sizes.length * (bw + gap) - gap;
-    const ox = p.x - totalW / 2;
-    const oy = p.y - 70;
-
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-
-    sizes.forEach((s, i) => {
-      const bx = ox + i * (bw + gap);
-      if (mx >= bx && mx <= bx + bw && my >= oy && my <= oy + bh) {
-        resizeDiffuser(pid, s);
-      }
-    });
   }
 
   function handleContextMenu(e: React.MouseEvent<HTMLCanvasElement>) {
@@ -220,7 +187,7 @@ export function DuctCanvas({
     const room = roomAtPoint(gp, level.rooms);
     if (!room) return;
     if (isOnWallOrDoor(gp, level.floorplan)) return;
-    // Short-circuit rule: supply and return can't be within 2 grid units of each other
+    if (isDuctFitting(gp, ductSystem.segments)) return;
     const opposite = ductSystem.diffusers.filter(d => d.roomId === room.id && d.isReturn !== isReturn);
     if (opposite.some(d => dist(d.position, gp) < 2.0)) return;
     onDuctSystemChange(autoPlaceDiffuser(ductSystem, gp, room, isReturn));
@@ -233,25 +200,12 @@ export function DuctCanvas({
       onDuctSystemChange({ ...ductSystem, diffusers: ductSystem.diffusers.filter((_, i) => i !== diffIdx) });
       return;
     }
-    // Erase segment whose start or end is within EPS
     const segIdx = ductSystem.segments.findIndex(
       s => dist(s.start, gp) < EPS || dist(s.end, gp) < EPS
     );
     if (segIdx >= 0) {
       onDuctSystemChange({ ...ductSystem, segments: ductSystem.segments.filter((_, i) => i !== segIdx) });
     }
-  }
-
-  function resizeDiffuser(diffId: string, size: DuctSize) {
-    const diff = ductSystem.diffusers.find(d => d.id === diffId);
-    if (!diff) return;
-    onDuctSystemChange({
-      ...ductSystem,
-      diffusers: ductSystem.diffusers.map(d =>
-        d.id === diffId ? { ...d, size, cfm: Math.min(d.cfm, DUCT_MAX_CFM[size]) } : d
-      ),
-    });
-    stateRef.current.popupDiffId = null;
   }
 
   // ── JSX ───────────────────────────────────────────────────────────────────
@@ -265,8 +219,7 @@ export function DuctCanvas({
       style={{ width, height, position: 'absolute', top: 0, left: 0, cursor: cursorFor(activeTool) }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
-      onMouseUp={e => { handleMouseUp(e); handlePopupClick(e); }}
-      onDoubleClick={handleDoubleClick}
+      onMouseUp={handleMouseUp}
       onContextMenu={handleContextMenu}
     />
   );
@@ -431,10 +384,15 @@ function drawDiffuser(
   ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
   ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
   ctx.beginPath();
-  ctx.moveTo(p.x - r * 0.68, p.y - r * 0.68);
-  ctx.lineTo(p.x + r * 0.68, p.y + r * 0.68);
-  ctx.moveTo(p.x + r * 0.68, p.y - r * 0.68);
-  ctx.lineTo(p.x - r * 0.68, p.y + r * 0.68);
+  if (d.isReturn) {
+    ctx.moveTo(p.x - r * 0.68, p.y);
+    ctx.lineTo(p.x + r * 0.68, p.y);
+  } else {
+    ctx.moveTo(p.x - r * 0.68, p.y - r * 0.68);
+    ctx.lineTo(p.x + r * 0.68, p.y + r * 0.68);
+    ctx.moveTo(p.x + r * 0.68, p.y - r * 0.68);
+    ctx.lineTo(p.x - r * 0.68, p.y + r * 0.68);
+  }
   ctx.stroke();
   ctx.fillStyle = color;
   ctx.font = `${GRID_PX * 0.155}px monospace`;
@@ -444,32 +402,63 @@ function drawDiffuser(
   ctx.restore();
 }
 
-function drawSizePopup(ctx: CanvasRenderingContext2D, diff: Diffuser) {
-  const p = gridToPixel(diff.position);
-  const sizes: DuctSize[] = [4, 6, 8, 12];
-  const bw = 46, bh = 24, gap = 4;
-  const totalW = sizes.length * (bw + gap) - gap;
-  const ox = p.x - totalW / 2;
-  const oy = p.y - 76;
 
-  ctx.save();
-  ctx.fillStyle = 'rgba(255,255,255,0.97)';
-  ctx.strokeStyle = '#64748b';
-  ctx.lineWidth = 1;
-  ctx.fillRect(ox - 10, oy - 10, totalW + 20, bh + 20);
-  ctx.strokeRect(ox - 10, oy - 10, totalW + 20, bh + 20);
+// ─── Validation helpers ───────────────────────────────────────────────────────
 
-  ctx.font = `bold ${GRID_PX * 0.18}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  sizes.forEach((s, i) => {
-    const bx = ox + i * (bw + gap);
-    ctx.fillStyle = s === diff.size ? '#3b82f6' : '#e2e8f0';
-    ctx.fillRect(bx, oy, bw, bh);
-    ctx.fillStyle = s === diff.size ? 'white' : '#334155';
-    ctx.fillText(`${s}"`, bx + bw / 2, oy + bh / 2);
-  });
-  ctx.restore();
+/** True if the segment passes through a diffuser position in its interior (not at an endpoint). */
+function segPassesThroughDiffuser(
+  seg: { start: GridPoint; end: GridPoint },
+  diffusers: Diffuser[],
+): boolean {
+  const isH = seg.start.y === seg.end.y;
+  const isV = seg.start.x === seg.end.x;
+  for (const d of diffusers) {
+    const { x, y } = d.position;
+    if (isH && y === seg.start.y) {
+      const lo = Math.min(seg.start.x, seg.end.x);
+      const hi = Math.max(seg.start.x, seg.end.x);
+      if (x > lo && x < hi) return true;
+    } else if (isV && x === seg.start.x) {
+      const lo = Math.min(seg.start.y, seg.end.y);
+      const hi = Math.max(seg.start.y, seg.end.y);
+      if (y > lo && y < hi) return true;
+    }
+  }
+  return false;
+}
+
+/** True if the segment crosses any interior (non-exterior) wall. */
+function segCrossesInteriorWall(
+  seg: { start: GridPoint; end: GridPoint },
+  fp: FloorPlan,
+): boolean {
+  const isH = seg.start.y === seg.end.y;
+  const isV = seg.start.x === seg.end.x;
+
+  for (const wall of fp.walls) {
+    if (wall.isExterior) continue;
+    const wallV = wall.start.x === wall.end.x;
+    const wallH = wall.start.y === wall.end.y;
+
+    if (isH && wallV) {
+      const wx = wall.start.x;
+      const sMinX = Math.min(seg.start.x, seg.end.x);
+      const sMaxX = Math.max(seg.start.x, seg.end.x);
+      const sy = seg.start.y;
+      const wMinY = Math.min(wall.start.y, wall.end.y);
+      const wMaxY = Math.max(wall.start.y, wall.end.y);
+      if (wx > sMinX && wx < sMaxX && sy > wMinY && sy < wMaxY) return true;
+    } else if (isV && wallH) {
+      const wy = wall.start.y;
+      const sMinY = Math.min(seg.start.y, seg.end.y);
+      const sMaxY = Math.max(seg.start.y, seg.end.y);
+      const sx = seg.start.x;
+      const wMinX = Math.min(wall.start.x, wall.end.x);
+      const wMaxX = Math.max(wall.start.x, wall.end.x);
+      if (wy > sMinY && wy < sMaxY && sx > wMinX && sx < wMaxX) return true;
+    }
+  }
+  return false;
 }
 
 // ─── Served-room overlay ──────────────────────────────────────────────────────
@@ -565,4 +554,43 @@ function cursorFor(tool: DrawingTool): string {
   if (tool === 'diffuser_supply' || tool === 'diffuser_return') return 'cell';
   if (tool === 'eraser') return 'not-allowed';
   return 'default';
+}
+
+/** True if new segment a would cross or overlap existing segment b (T-junctions allowed). */
+function segmentsConflict(a: DuctSegment, b: DuctSegment): boolean {
+  const aHoriz = a.start.y === a.end.y;
+  const bHoriz = b.start.y === b.end.y;
+
+  if (aHoriz === bHoriz) {
+    if (aHoriz) {
+      if (a.start.y !== b.start.y) return false;
+      const ax1 = Math.min(a.start.x, a.end.x), ax2 = Math.max(a.start.x, a.end.x);
+      const bx1 = Math.min(b.start.x, b.end.x), bx2 = Math.max(b.start.x, b.end.x);
+      return ax1 < bx2 && bx1 < ax2;
+    } else {
+      if (a.start.x !== b.start.x) return false;
+      const ay1 = Math.min(a.start.y, a.end.y), ay2 = Math.max(a.start.y, a.end.y);
+      const by1 = Math.min(b.start.y, b.end.y), by2 = Math.max(b.start.y, b.end.y);
+      return ay1 < by2 && by1 < ay2;
+    }
+  }
+
+  const [h, v] = aHoriz ? [a, b] : [b, a];
+  const hx1 = Math.min(h.start.x, h.end.x), hx2 = Math.max(h.start.x, h.end.x);
+  const hy = h.start.y;
+  const vx = v.start.x;
+  const vy1 = Math.min(v.start.y, v.end.y), vy2 = Math.max(v.start.y, v.end.y);
+  return vx > hx1 && vx < hx2 && hy > vy1 && hy < vy2;
+}
+
+/** True if gp is a duct fitting: shared by 2 or more segment endpoints (elbow/junction). */
+function isDuctFitting(gp: GridPoint, segments: DuctSegment[]): boolean {
+  let endpoints = 0;
+  for (const seg of segments) {
+    if ((seg.start.x === gp.x && seg.start.y === gp.y) ||
+        (seg.end.x   === gp.x && seg.end.y   === gp.y)) {
+      if (++endpoints >= 2) return true;
+    }
+  }
+  return false;
 }
