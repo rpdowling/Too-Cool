@@ -75,7 +75,7 @@ function buildLevel(): Level {
   const ahuFinal: AHU = { ...ahu, totalCFM: total };
 
   // 5. Optimal duct system
-  const optimal: DuctSystem = buildOptimalDuctSystem(rooms, ahuFinal);
+  const optimal: DuctSystem = buildOptimalDuctSystem(rooms, ahuFinal, fp);
   const optLen = totalDuctLength(optimal);
 
   return {
