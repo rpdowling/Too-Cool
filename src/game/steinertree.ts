@@ -237,7 +237,59 @@ export function buildOptimalDuctSystem(rooms: Room[], ahu: AHU, fp: FloorPlan): 
       id: uid(), position: retPt, roomId: room.id,
       size: autoSizeDuct(room.cfm), cfm: room.cfm, isReturn: true,
     });
-    returnSegments.push(...routeSegments(retPt, ahu.returnPort, room.cfm, true));
+  }
+
+  // Route returns through a shared MST tree (avoids overlapping return segments)
+  const retTerminals: Terminal[] = [
+    { id: 'ahu-ret', point: ahu.returnPort, cfm: 0 },
+    ...returnDiffusers.map(d => ({ id: d.id, point: d.position, cfm: d.cfm })),
+  ];
+  const retMSTEdges = primMST(retTerminals);
+
+  const retAdj = new Map<string, string[]>();
+  for (const [a, b] of retMSTEdges) {
+    if (!retAdj.has(a.id)) retAdj.set(a.id, []);
+    if (!retAdj.has(b.id)) retAdj.set(b.id, []);
+    retAdj.get(a.id)!.push(b.id);
+    retAdj.get(b.id)!.push(a.id);
+  }
+
+  const retParent = new Map<string, string>();
+  const retOrder: string[] = [];
+  const retVisited = new Set<string>(['ahu-ret']);
+  const retQueue: string[] = ['ahu-ret'];
+  while (retQueue.length > 0) {
+    const cur = retQueue.shift()!;
+    retOrder.push(cur);
+    for (const nb of retAdj.get(cur) ?? []) {
+      if (!retVisited.has(nb)) {
+        retVisited.add(nb);
+        retParent.set(nb, cur);
+        retQueue.push(nb);
+      }
+    }
+  }
+
+  const retPosMap = new Map<string, GridPoint>([['ahu-ret', ahu.returnPort]]);
+  for (const d of returnDiffusers) retPosMap.set(d.id, d.position);
+
+  const retTermMap = new Map(retTerminals.map(t => [t.id, t]));
+  const retSubtreeCFM = new Map<string, number>();
+  for (const id of [...retOrder].reverse()) {
+    const own = retTermMap.get(id)?.cfm ?? 0;
+    const childSum = (retAdj.get(id) ?? [])
+      .filter(nb => retParent.get(nb) === id)
+      .reduce((s, nb) => s + (retSubtreeCFM.get(nb) ?? 0), 0);
+    retSubtreeCFM.set(id, own + childSum);
+  }
+
+  for (const id of retOrder) {
+    if (id === 'ahu-ret') continue;
+    const parId = retParent.get(id)!;
+    const from  = retPosMap.get(id)!;
+    const to    = retPosMap.get(parId)!;
+    const cfm   = retSubtreeCFM.get(id) ?? 0;
+    returnSegments.push(...routeSegments(from, to, cfm, true));
   }
 
   return {
