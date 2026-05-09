@@ -45,36 +45,32 @@ const LEVEL2_FP: FloorPlan = {
   vents: [],
 };
 
-// Level-3 floor plan: 8×6 m, Room A (3 m) + glass hallway (2 m) + Room B (3 m)
+// Level-3 floor plan: 8×8 m, Room A (top, 3m) + glass hallway (2m) + Room B (bottom, 3m)
 const LEVEL3_FP: FloorPlan = {
-  gridWidth: 8, gridHeight: 6,
+  gridWidth: 8, gridHeight: 8,
   walls: [
-    { id: 'w-an1', start: { x: 0, y: 0 }, end: { x: 1, y: 0 }, wallType: 'normal', isExterior: true },
-    { id: 'w-an2', start: { x: 2, y: 0 }, end: { x: 3, y: 0 }, wallType: 'normal', isExterior: true },
-    { id: 'w-bn1', start: { x: 5, y: 0 }, end: { x: 6, y: 0 }, wallType: 'normal', isExterior: true },
-    { id: 'w-bn2', start: { x: 7, y: 0 }, end: { x: 8, y: 0 }, wallType: 'normal', isExterior: true },
-    { id: 'w-w',   start: { x: 0, y: 0 }, end: { x: 0, y: 6 }, wallType: 'normal', isExterior: true },
-    { id: 'w-e',   start: { x: 8, y: 0 }, end: { x: 8, y: 6 }, wallType: 'normal', isExterior: true },
-    { id: 'w-as1', start: { x: 0, y: 6 }, end: { x: 1, y: 6 }, wallType: 'normal', isExterior: true },
-    { id: 'w-as2', start: { x: 2, y: 6 }, end: { x: 3, y: 6 }, wallType: 'normal', isExterior: true },
-    { id: 'w-bs1', start: { x: 5, y: 6 }, end: { x: 6, y: 6 }, wallType: 'normal', isExterior: true },
-    { id: 'w-bs2', start: { x: 7, y: 6 }, end: { x: 8, y: 6 }, wallType: 'normal', isExterior: true },
-    { id: 'w-ah1', start: { x: 3, y: 0 }, end: { x: 3, y: 2 }, wallType: 'normal', isExterior: false },
-    { id: 'w-ah2', start: { x: 3, y: 4 }, end: { x: 3, y: 6 }, wallType: 'normal', isExterior: false },
-    { id: 'w-hb1', start: { x: 5, y: 0 }, end: { x: 5, y: 2 }, wallType: 'normal', isExterior: false },
-    { id: 'w-hb2', start: { x: 5, y: 4 }, end: { x: 5, y: 6 }, wallType: 'normal', isExterior: false },
+    { id: 'w-n1',  start: { x: 0, y: 0 }, end: { x: 1, y: 0 }, wallType: 'normal', isExterior: true },
+    { id: 'w-n2',  start: { x: 6, y: 0 }, end: { x: 8, y: 0 }, wallType: 'normal', isExterior: true },
+    { id: 'w-s1',  start: { x: 0, y: 8 }, end: { x: 2, y: 8 }, wallType: 'normal', isExterior: true },
+    { id: 'w-s2',  start: { x: 3, y: 8 }, end: { x: 5, y: 8 }, wallType: 'normal', isExterior: true },
+    { id: 'w-w',   start: { x: 0, y: 0 }, end: { x: 0, y: 8 }, wallType: 'normal', isExterior: true },
+    { id: 'w-e',   start: { x: 8, y: 0 }, end: { x: 8, y: 8 }, wallType: 'normal', isExterior: true },
+    { id: 'w-ah1', start: { x: 0, y: 3 }, end: { x: 2, y: 3 }, wallType: 'normal', isExterior: false },
+    { id: 'w-ah2', start: { x: 7, y: 3 }, end: { x: 8, y: 3 }, wallType: 'normal', isExterior: false },
+    { id: 'w-hb1', start: { x: 0, y: 5 }, end: { x: 1, y: 5 }, wallType: 'normal', isExterior: false },
+    { id: 'w-hb2', start: { x: 6, y: 5 }, end: { x: 8, y: 5 }, wallType: 'normal', isExterior: false },
   ],
   windows: [
-    { id: 'win-a',  start: { x: 1, y: 0 }, end: { x: 2, y: 0 } },
-    { id: 'win-hn', start: { x: 3, y: 0 }, end: { x: 5, y: 0 } },
-    { id: 'win-hs', start: { x: 3, y: 6 }, end: { x: 5, y: 6 } },
-    { id: 'win-b',  start: { x: 6, y: 0 }, end: { x: 7, y: 0 } },
+    { id: 'win-a',  start: { x: 2, y: 0 }, end: { x: 6, y: 0 } },
+    { id: 'win-hn', start: { x: 2, y: 3 }, end: { x: 6, y: 3 } },
+    { id: 'win-hs', start: { x: 2, y: 5 }, end: { x: 6, y: 5 } },
+    { id: 'win-b',  start: { x: 5, y: 8 }, end: { x: 8, y: 8 } },
   ],
   doors: [
-    { id: 'door-a',  start: { x: 1, y: 6 }, end: { x: 2, y: 6 }, isExterior: true },
-    { id: 'door-b',  start: { x: 6, y: 6 }, end: { x: 7, y: 6 }, isExterior: true },
-    { id: 'door-ah', start: { x: 3, y: 2 }, end: { x: 3, y: 4 }, isExterior: false },
-    { id: 'door-hb', start: { x: 5, y: 2 }, end: { x: 5, y: 4 }, isExterior: false },
+    { id: 'door-a',  start: { x: 1, y: 0 }, end: { x: 2, y: 0 }, isExterior: true },
+    { id: 'door-b',  start: { x: 2, y: 8 }, end: { x: 3, y: 8 }, isExterior: true },
+    { id: 'door-ah', start: { x: 6, y: 3 }, end: { x: 7, y: 3 }, isExterior: false },
+    { id: 'door-hb', start: { x: 1, y: 5 }, end: { x: 2, y: 5 }, isExterior: false },
   ],
   vents: [],
 };
@@ -139,15 +135,15 @@ describe('detectRooms — level 3 (glass corridor)', () => {
     expect(detectRooms(LEVEL3_FP)).toHaveLength(3);
   });
 
-  it('room cell counts are 18 + 18 + 12 (or permutation)', () => {
+  it('room cell counts are 16 + 24 + 24 (or permutation)', () => {
     const rooms = detectRooms(LEVEL3_FP);
     const counts = rooms.map(r => r.cells.length).sort((a, b) => a - b);
-    expect(counts).toEqual([12, 18, 18]);
+    expect(counts).toEqual([16, 24, 24]);
   });
 
   it('hallway room has windows on north and south', () => {
     const rooms = detectRooms(LEVEL3_FP);
-    const hallway = rooms.find(r => r.cells.length === 12)!;
+    const hallway = rooms.find(r => r.cells.length === 16)!;
     expect(hallway.windowIds).toContain('win-hn');
     expect(hallway.windowIds).toContain('win-hs');
   });

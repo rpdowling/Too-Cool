@@ -479,7 +479,7 @@ function drawServedRoomOverlay(
   level: Level,
   ds: DuctSystem,
 ) {
-  const fullyServed = computeServedRooms(ds, level.ahu);
+  const fullyServed = computeServedRooms(ds, level.ahu, level.rooms);
   const supplyOnly  = computeSupplyServedRooms(ds, level.ahu);
 
   ctx.save();

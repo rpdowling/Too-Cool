@@ -1,4 +1,4 @@
-import type { DuctSystem, DuctSegment, Diffuser, AHU, GridPoint } from '../types';
+import type { DuctSystem, DuctSegment, Diffuser, AHU, GridPoint, Room } from '../types';
 
 function ptKey(p: GridPoint): string { return `${p.x},${p.y}`; }
 
@@ -35,6 +35,16 @@ function diffuserServedRooms(diffusers: Diffuser[], reachable: Set<string>): Set
   return served;
 }
 
+/** Grid point (px,py) is a corner of any of the four adjacent cells in this room. */
+function pointTouchesRoom(px: number, py: number, room: Room): boolean {
+  return room.cells.some(c =>
+    (c.x === px     && c.y === py    ) ||
+    (c.x === px - 1 && c.y === py    ) ||
+    (c.x === px     && c.y === py - 1) ||
+    (c.x === px - 1 && c.y === py - 1)
+  );
+}
+
 /**
  * Rooms whose supply diffuser is reachable from the AHU supply port via supply ducts.
  */
@@ -45,18 +55,32 @@ export function computeSupplyServedRooms(ds: DuctSystem, ahu: AHU): Set<string> 
 
 /**
  * Rooms whose return grille is reachable from the AHU return port via return ducts.
+ * Accepts either an exact endpoint match or any reachable point that touches the room
+ * (handles cases where the player's duct ends near but not exactly at the diffuser).
  */
-export function computeReturnServedRooms(ds: DuctSystem, ahu: AHU): Set<string> {
+export function computeReturnServedRooms(ds: DuctSystem, ahu: AHU, rooms: Room[]): Set<string> {
   const reachable = bfsReachable(ds.segments.filter(s => s.isReturn), ahu.returnPort);
-  return diffuserServedRooms(ds.diffusers.filter(d => d.isReturn), reachable);
+  const served = new Set<string>();
+  for (const d of ds.diffusers.filter(d => d.isReturn)) {
+    if (reachable.has(ptKey(d.position))) { served.add(d.roomId); continue; }
+    const room = rooms.find(r => r.id === d.roomId);
+    if (!room) continue;
+    for (const ptk of reachable) {
+      const comma = ptk.indexOf(',');
+      const px = Number(ptk.slice(0, comma));
+      const py = Number(ptk.slice(comma + 1));
+      if (pointTouchesRoom(px, py, room)) { served.add(d.roomId); break; }
+    }
+  }
+  return served;
 }
 
 /**
  * Rooms fully served: supply diffuser connected to AHU supply port AND
  * return grille connected to AHU return port — both via continuous duct paths.
  */
-export function computeServedRooms(ds: DuctSystem, ahu: AHU): Set<string> {
+export function computeServedRooms(ds: DuctSystem, ahu: AHU, rooms: Room[]): Set<string> {
   const supply = computeSupplyServedRooms(ds, ahu);
-  const ret    = computeReturnServedRooms(ds, ahu);
+  const ret    = computeReturnServedRooms(ds, ahu, rooms);
   return new Set([...supply].filter(id => ret.has(id)));
 }
